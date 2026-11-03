@@ -48,9 +48,11 @@ PRODUCTS = [
 ]
 N = len(PRODUCTS)
 
-INTRO_S = 8 * BEAT
+MONTAGE_S = 3 * BEAT       # hook: 5 quick product flashes on half-beats
+TEXT_S = 8 * BEAT          # "Bhai Dooj aa raha hai... gift nahi dogi bhai ko?"
+INTRO_S = MONTAGE_S + TEXT_S
 GIFT_S = 6 * BEAT
-OUTRO_S = 9 * BEAT
+OUTRO_S = 10 * BEAT
 TOTAL_S = INTRO_S + GIFT_S * N + OUTRO_S
 CUTS = [INTRO_S + GIFT_S * k for k in range(N + 1)]
 
@@ -281,19 +283,86 @@ def handheld(t, amt=5.0):
 
 
 # ----------------------------------------------------------------- scenes
+
+# ----------------------------------------------------------------- sparkle / glint
+def _dot(r):
+    y, x = np.ogrid[-r * 2:r * 2 + 1, -r * 2:r * 2 + 1]
+    a = np.exp(-(x ** 2 + y ** 2) / (2 * (r * 0.7) ** 2))
+    im = np.zeros(a.shape + (4,), np.uint8)
+    im[..., 0], im[..., 1], im[..., 2] = 255, 214, 120
+    im[..., 3] = (a * 255).astype(np.uint8)
+    return Image.fromarray(im, "RGBA")
+
+
+DOTS = [_dot(r) for r in (3, 5, 8, 12)]
+_pr = np.random.default_rng(21)
+PARTICLES = [(_pr.uniform(80, W - 80), _pr.uniform(500, 1750), _pr.integers(0, 4),
+              _pr.uniform(0, 6.28), _pr.uniform(25, 70)) for _ in range(34)]
+
+
+def sparkle(frame, t, strength=1.0):
+    for x, y, k, ph, spd in PARTICLES:
+        yy = 500 + ((y - 500 - t * spd) % 1250)
+        xx = x + 18 * math.sin(t * 0.9 + ph)
+        a = (0.35 + 0.65 * (0.5 + 0.5 * math.sin(t * 2.2 + ph))) * strength
+        d = DOTS[k]
+        if a < 0.05:
+            continue
+        if a < 0.99:
+            d = d.copy()
+            d.putalpha(d.getchannel("A").point(lambda v: int(v * a)))
+        frame.alpha_composite(d, (int(xx - d.width / 2), int(yy - d.height / 2)))
+
+
+def glint(im, pos):
+    """Diagonal light sweep across the product (pos 0..1)."""
+    if pos <= 0 or pos >= 1:
+        return im
+    w, h = im.size
+    y, x = np.ogrid[:h, :w]
+    diag = (x + y * 0.55) / (w + h * 0.55)
+    band = np.exp(-((diag - (pos * 1.4 - 0.2)) / 0.045) ** 2)
+    a = np.asarray(im.getchannel("A")).astype(np.float32) / 255
+    arr = np.asarray(im).astype(np.float32)
+    arr[..., :3] += (band * a * 0.55 * 255)[..., None]
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
+
+
+def scene_montage(t):
+    """Opening hook: every gift flashes past on the half-beat."""
+    step = BEAT / 2
+    k = min(int(t / step), N)
+    if k >= N:  # last half beat: gold title card
+        frame = Image.new("RGBA", (W, H), (10, 10, 14, 255))
+        tt = t - N * step
+        draw_text(frame, 700, "5 GIFTS", font(int(210 + 40 * (1 - ease(tt / 0.25)))), GOLD)
+        draw_text(frame, 1060, "FOR YOUR BHAI", SEMI(44), WHITE, track=10)
+        return frame
+    p = PRODUCTS[k]
+    tt = t - k * step
+    frame = BACKDROPS[k].copy().convert("RGBA")
+    im = p["img"]
+    fitk = 1.0 if p.get("dark_bg") else min(1.0, 1250 / im.height)
+    sc = fitk * (1.18 - 0.1 * ease(tt / step))
+    im = im.resize((int(im.width * sc), int(im.height * sc)), Image.BICUBIC)
+    frame.alpha_composite(im, (int(W / 2 - im.width / 2), int(960 - im.height / 2)))
+    draw_text(frame, 150, "BHAI DOOJ SPECIAL", SEMI(36), GOLD, track=12)
+    return frame
+
+
 def scene_intro(t):
-    z = 1.0 + 0.10 * ease_io(t / INTRO_S) + 0.012 * beat_pulse(t)
+    z = 1.0 + 0.10 * ease_io(t / TEXT_S) + 0.012 * beat_pulse(t)
     dx, dy = handheld(t)
     frame = zoom_crop(WALL_PLATE, z, dx=dx, dy=dy)
-    dim = 1.0 if t < 0.35 else 1 - 0.35 * ease((t - 0.35) / 0.6)
+    dim = 0.65
     arr = np.asarray(frame).astype(np.float32) * dim * VIG
     frame = Image.fromarray(arr.astype(np.uint8)).convert("RGBA")
 
     b = t / BEAT
     if b < 4:
-        a = ease((b - 0.6) / 0.5)
-        draw_text(frame, 560, "BHAI DOOJ", font(230), GOLD, a, rise=1 - ease((b - 0.6) / 0.6))
-        a = ease((b - 1.6) / 0.5)
+        a = ease((b - 0.1) / 0.4)
+        draw_text(frame, 560, "BHAI DOOJ", font(230), GOLD, a, rise=1 - ease((b - 0.1) / 0.5))
+        a = ease((b - 1.0) / 0.5)
         draw_text(frame, 860, "aa raha hai...", MED(70), WHITE, a)
         out = clamp((b - 3.6) / 0.4)
         if out > 0:
@@ -332,14 +401,18 @@ def scene_gift(t, i):
     fitk = 1.0 if p.get("dark_bg") else min(1.0, (bottom - top) / im.height)
     s = fitk * (1.0 + 0.12 * (1 - ease(t / 0.45)) + 0.03 * (t / GIFT_S) + 0.008 * beat_pulse(t))
     im = im.resize((int(im.width * s), int(im.height * s)), Image.BICUBIC)
+    if not p.get("dark_bg"):
+        im = glint(im, (t - 0.55) / 0.7)
     alpha = ease(t / 0.3)
     if alpha < 1:
         im.putalpha(im.getchannel("A").point(lambda v: int(v * alpha)))
+    slide = (1 if i % 2 == 0 else -1) * 220 * (1 - ease(t / 0.5))
+    sparkle(frame, t + i * 4, 0.8 * ease(t / 0.6))
     if p.get("dark_bg"):
-        frame.alpha_composite(im, (int(W / 2 - im.width / 2), int(1120 - im.height / 2)))
+        frame.alpha_composite(im, (int(W / 2 - im.width / 2 + slide), int(1120 - im.height / 2)))
     else:
         cy = (top + bottom) / 2
-        frame.alpha_composite(im, (int(W / 2 - im.width / 2), int(cy - im.height / 2)))
+        frame.alpha_composite(im, (int(W / 2 - im.width / 2 + slide), int(cy - im.height / 2)))
 
     # footer
     a = ease((t - 0.7) / 0.5)
@@ -349,22 +422,45 @@ def scene_gift(t, i):
     return frame
 
 
-def scene_outro(t):
-    z = 1.22 - 0.2 * ease_io(t / OUTRO_S)
-    dx, dy = handheld(t + 9)
-    frame = zoom_crop(WALL_PLATE, z, dx=dx, dy=dy)
-    arr = np.asarray(frame).astype(np.float32) * 0.55 * VIG
-    frame = Image.fromarray(arr.astype(np.uint8)).convert("RGBA")
+SHELF_H = 470
+SHELF = []
+for _p in PRODUCTS:
+    _im = _p["img"]
+    _k = SHELF_H / _im.height if not _p.get("dark_bg") else SHELF_H * 1.6 / _im.height
+    SHELF.append(_im.resize((int(_im.width * _k), int(_im.height * _k)), Image.LANCZOS))
+SHELF_GAP = 50
+SHELF_W = sum(im.width for im in SHELF) + SHELF_GAP * len(SHELF)
+OUTRO_BG = product_backdrop((235, 170, 60))
 
+
+def scene_outro(t):
+    frame = OUTRO_BG.copy().convert("RGBA")
+    sparkle(frame, t + 30, 0.9)
     b = t / BEAT
-    draw_text(frame, 470, "IS BHAI DOOJ", SEMI(40), GOLD, ease(b / 0.6), track=10)
-    draw_text(frame, 550, "BHAI KO DO", font(170), WHITE, ease((b - 0.5) / 0.4), rise=1 - ease((b - 0.5) / 0.45))
-    draw_text(frame, 760, "HOT WHEELS", font(210), GOLD, ease((b - 1.5) / 0.4), rise=1 - ease((b - 1.5) / 0.45))
+    draw_text(frame, 190, "IS BHAI DOOJ", SEMI(40), GOLD, ease(b / 0.6), track=10)
+    draw_text(frame, 260, "BHAI KO DO", font(170), WHITE, ease((b - 0.5) / 0.4), rise=1 - ease((b - 0.5) / 0.45))
+    draw_text(frame, 460, "HOT WHEELS", font(210), GOLD, ease((b - 1.0) / 0.4), rise=1 - ease((b - 1.0) / 0.45))
+
+    # endless shelf of all five gifts gliding left
+    a = ease((b - 1.5) / 0.6)
+    if a > 0:
+        shelf = Image.new("RGBA", (W, SHELF_H + 140), (0, 0, 0, 0))
+        x = -((t * 150) % SHELF_W) + 40
+        while x < W:
+            for im in SHELF:
+                if x + im.width > 0 and x < W:
+                    shelf.alpha_composite(im, (int(x), int((SHELF_H - im.height) / 2 + 20)))
+                x += im.width + SHELF_GAP
+        if a < 1:
+            shelf.putalpha(shelf.getchannel("A").point(lambda v: int(v * a)))
+        frame.alpha_composite(shelf, (0, 800))
+
     a = ease((b - 3.0) / 0.5)
     d = ImageDraw.Draw(frame)
-    d.line((W / 2 - 160 * a, 1080, W / 2 + 160 * a, 1080), fill=GOLD + (255,), width=3)
-    draw_text(frame, 1120, "DM TO ORDER", SEMI(64), WHITE, ease((b - 3.5) / 0.5), track=10)
-    draw_text(frame, 1225, "Limited pieces  •  RLC  •  Premium", MED(40), SOFT, ease((b - 4.5) / 0.5))
+    d.line((W / 2 - 160 * a, 1500, W / 2 + 160 * a, 1500), fill=GOLD + (255,), width=3)
+    pulse = 1 + 0.03 * beat_pulse(t)
+    draw_text(frame, 1535, "DM TO ORDER", SEMI(int(66 * pulse)), WHITE, ease((b - 3.5) / 0.5), track=10)
+    draw_text(frame, 1645, "Limited pieces  •  RLC  •  Premium", MED(40), SOFT, ease((b - 4.5) / 0.5))
     return frame
 
 
@@ -383,15 +479,21 @@ def whip(img, amount):
 
 def render(n):
     t = n / FPS
-    if t < INTRO_S:
-        f = scene_intro(t)
+    if t < MONTAGE_S:
+        f = scene_montage(t)
+    elif t < INTRO_S:
+        f = scene_intro(t - MONTAGE_S)
     elif t < CUTS[-1]:
         i = int((t - INTRO_S) // GIFT_S)
         f = scene_gift(t - INTRO_S - i * GIFT_S, i)
     else:
         f = scene_outro(t - CUTS[-1])
     f = f.convert("RGB")
-    for c in CUTS:
+    if t < MONTAGE_S:  # flash on every half-beat in the montage
+        dt = t % (BEAT / 2)
+        if dt < 0.06:
+            f = Image.blend(f, Image.new("RGB", (W, H), (255, 245, 230)), 0.5 * (1 - dt / 0.06))
+    for c in [MONTAGE_S] + CUTS:
         dt = t - c
         if -0.1 < dt < 0.12:
             f = whip(f, 1 - abs(dt) / 0.12)
@@ -494,8 +596,7 @@ def make_music(path, seconds):
         s = k % 16
         at = k * st + rng.normal(0, 0.004)  # human timing
         vel = rng.uniform(0.85, 1.0)
-        if k * st < 0.9:  # soft start: only shaker
-            add(drums, S * 0.35 * vel, at)
+        if INTRO_S - BEAT <= k * st < INTRO_S:  # drop-out before the first gift
             continue
         if s in bass_steps:
             add(drums, B * 0.95 * vel, at)
@@ -520,8 +621,23 @@ def make_music(path, seconds):
         add(music, pluck(f, 0.9, 0.995) * 0.32 * rng.uniform(0.8, 1.0), at)
 
     # whoosh on every scene change
-    for c in [INTRO_S + GIFT_S * k for k in range(N + 1)]:
+    for c in [MONTAGE_S] + [INTRO_S + GIFT_S * k for k in range(N + 1)]:
         add(fx, whoosh() * 0.25, c - 0.3)
+    # snap on each montage flash
+    for k in range(N + 1):
+        add(fx, dhol_tilli() * 0.35, k * BEAT / 2)
+    # riser into the first gift, then a big impact
+    rn = int(2 * BEAT * SR)
+    tt = np.arange(rn) / rn
+    noise = rng.standard_normal(rn)
+    noise = noise - np.convolve(noise, np.ones(9) / 9, "same") * (1 - tt)
+    tone = np.sin(2 * np.pi * np.cumsum(220 + 660 * tt ** 2) / SR)
+    add(fx, (noise * 0.25 + tone * 0.12) * tt ** 2.2, INTRO_S - 2 * BEAT)
+    bn = int(1.2 * SR)
+    bt = np.arange(bn) / SR
+    boom = np.sin(2 * np.pi * np.cumsum(40 + 90 * np.exp(-bt * 14)) / SR) * np.exp(-bt * 3.2)
+    boom += rng.standard_normal(bn) * np.exp(-bt * 25) * 0.4
+    add(fx, boom * 0.9, INTRO_S)
 
     mix = reverb(drums, 0.8, 0.12) + reverb(music, 1.8, 0.3) + fx
     fade_in, fade_out = int(0.3 * SR), int(1.4 * SR)
