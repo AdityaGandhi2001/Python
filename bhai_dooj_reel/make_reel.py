@@ -38,7 +38,7 @@ PRODUCTS = [
     dict(file="ferrari.webp", brand="HOT WHEELS  •  RLC", title=["FERRARI F40"],
          line="Red Line Club Exclusive", glow=(230, 30, 40)),
     dict(file="mustang.jpg", brand="HOT WHEELS  •  RLC", title=["MUSTANG", "SHELBY GT500"],
-         line="Original RLC  •  Spectraflame Blue", glow=(30, 110, 255), dark_bg=True),
+         line="Original RLC  •  Spectraflame Blue", glow=(30, 110, 255), car=True),
     dict(file="godzilla.jpg", brand="HOT WHEELS  PREMIUM", title=["NISSAN SKYLINE", "GODZILLA"],
          line="GT-R BNR34  •  Pop Culture", glow=(200, 60, 50)),
     dict(file="tfox.jpg", brand="HOT WHEELS  •  SIGNED", title=["T-FOX", "GT-R GUACZILLA"],
@@ -183,14 +183,21 @@ def with_reflection(im, strength=0.22, frac=0.28):
     return out
 
 
+# Clean cut-outs are made once by prepare_cutouts.py (assets/products/cut/*.png)
 for p in PRODUCTS:
-    path = os.path.join(ASSETS, "products", p["file"])
-    if p.get("dark_bg"):
-        im = fit_size(dark_photo(path), 1080, 1080)
-        p["img"] = im
+    name = os.path.splitext(p["file"])[0]
+    path = os.path.join(ASSETS, "products", "cut", name + ".png")
+    if not os.path.exists(path):  # fallback: quick in-script background removal
+        path = None
+    im = Image.open(path).convert("RGBA") if path else cutout(os.path.join(ASSETS, "products", p["file"]))
+    if p.get("car"):
+        maxw, maxh = 1000, 700
+    elif p.get("wide"):
+        maxw, maxh = 1000, 900
     else:
-        maxw, maxh = (1000, 900) if p.get("wide") else (860, 960)
-        p["img"] = with_reflection(fit_size(cutout(path), maxw, maxh))
+        maxw, maxh = 860, 960
+    p["img"] = with_reflection(fit_size(im, maxw, maxh), strength=0.3 if p.get("car") else 0.22,
+                               frac=0.45 if p.get("car") else 0.28)
 
 # ----------------------------------------------------------------- backdrops
 WALL = Image.open(os.path.join(ASSETS, "wall.jpg")).convert("RGB")
@@ -342,7 +349,7 @@ def scene_montage(t):
     tt = t - k * step
     frame = BACKDROPS[k].copy().convert("RGBA")
     im = p["img"]
-    fitk = 1.0 if p.get("dark_bg") else min(1.0, 1250 / im.height)
+    fitk = min(1.0, 1250 / im.height, 980 / im.width)
     sc = fitk * (1.18 - 0.1 * ease(tt / step))
     im = im.resize((int(im.width * sc), int(im.height * sc)), Image.BICUBIC)
     frame.alpha_composite(im, (int(W / 2 - im.width / 2), int(960 - im.height / 2)))
@@ -426,7 +433,7 @@ SHELF_H = 470
 SHELF = []
 for _p in PRODUCTS:
     _im = _p["img"]
-    _k = SHELF_H / _im.height if not _p.get("dark_bg") else SHELF_H * 1.6 / _im.height
+    _k = SHELF_H / _im.height if not _p.get("car") else SHELF_H * 0.62 / _im.height
     SHELF.append(_im.resize((int(_im.width * _k), int(_im.height * _k)), Image.LANCZOS))
 SHELF_GAP = 50
 SHELF_W = sum(im.width for im in SHELF) + SHELF_GAP * len(SHELF)
