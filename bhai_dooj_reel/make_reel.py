@@ -50,9 +50,9 @@ PRODUCTS = [
 N = len(PRODUCTS)
 
 MONTAGE_S = 3 * BEAT       # hook: 5 quick product flashes on half-beats
-TEXT_S = 8 * BEAT          # "Bhai Dooj aa raha hai... gift nahi dogi bhai ko?"
+TEXT_S = 6 * BEAT          # "Bhai Dooj aa raha hai... gift nahi dogi bhai ko?"
 INTRO_S = MONTAGE_S + TEXT_S
-GIFT_S = 6 * BEAT
+GIFT_S = 4 * BEAT
 OUTRO_S = 10 * BEAT
 TOTAL_S = INTRO_S + GIFT_S * N + OUTRO_S
 CUTS = [INTRO_S + GIFT_S * k for k in range(N + 1)]
@@ -387,7 +387,7 @@ def scene_intro(t):
     arr = np.asarray(frame).astype(np.float32) * dim * VIG
     frame = Image.fromarray(arr.astype(np.uint8)).convert("RGBA")
 
-    b = t / BEAT
+    b = t / BEAT * (8 * BEAT / TEXT_S)  # text animation was timed for 8 beats
     if b < 4:
         a = ease((b - 0.1) / 0.4)
         draw_text(frame, 560, "BHAI DOOJ", font(230), GOLD, a, rise=1 - ease((b - 0.1) / 0.5))
@@ -428,8 +428,8 @@ def scene_photo(t, i):
         tt = t - 0.12 - 0.1 * k
         draw_text(frame, yy, line, font(size), WHITE if k == 0 else GOLD, ease(tt / 0.3), rise=1 - ease(tt / 0.4))
         yy += int(size * 1.25)
-    draw_text(frame, 1690, p["line"], MED(40), SOFT, ease((t - 0.7) / 0.5))
-    draw_text(frame, 1760, "Perfect Bhai Dooj gift", SEMI(34), GOLD, ease((t - 1.2) / 0.5), track=3)
+    draw_text(frame, 1690, p["line"], MED(40), SOFT, ease((t - 0.45) / 0.4))
+    draw_text(frame, 1760, "Perfect Bhai Dooj gift", SEMI(34), GOLD, ease((t - 0.75) / 0.4), track=3)
     return frame
 
 
@@ -474,9 +474,9 @@ def scene_gift(t, i):
         frame.alpha_composite(im, (int(W / 2 - im.width / 2 + slide), int(cy - im.height / 2)))
 
     # footer
-    a = ease((t - 0.7) / 0.5)
+    a = ease((t - 0.45) / 0.4)
     draw_text(frame, 1690, p["line"], MED(40), SOFT, a)
-    a = ease((t - 1.2) / 0.5)
+    a = ease((t - 0.75) / 0.4)
     draw_text(frame, 1760, "Perfect Bhai Dooj gift", SEMI(34), GOLD, a, track=3)
     return frame
 
