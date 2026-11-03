@@ -103,6 +103,75 @@ def ai_cutout(path, session):
     return out.crop(a.getbbox())
 
 
+def white_studio_cutout(path, session):
+    """Several cars on pure white (one of them white): AI mask OR a shrunk
+    flood-fill mask, so the white car stays solid and there is no halo.
+    The two rows of cars are then stacked closer together."""
+    from rembg import remove
+    from PIL import ImageChops
+    im = Image.open(path).convert("RGB")
+    w, h = im.size
+    ai = remove(im, session=session).getchannel("A").point(lambda v: 0 if v < 40 else v)
+    work = im.copy()
+    key = (255, 0, 255)
+    ImageDraw.floodfill(work, (0, 0), key, thresh=10)
+    a = np.asarray(work)
+    fg = ~((a[..., 0] == 255) & (a[..., 1] == 0) & (a[..., 2] == 255))
+    m = Image.fromarray((fg * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.MinFilter(5))
+    pad = Image.new("L", (w + 2, h + 2), 0)
+    pad.paste(m, (1, 1))
+    ImageDraw.floodfill(pad, (0, 0), 128)
+    m = pad.crop((1, 1, w + 1, h + 1)).point(lambda v: 0 if v == 128 else 255)
+    m = m.filter(ImageFilter.MinFilter(11)).filter(ImageFilter.GaussianBlur(1.5))
+    alpha = ImageChops.lighter(ai, m)
+    out = im.convert("RGBA")
+    out.putalpha(alpha)
+    out = out.crop(alpha.getbbox())
+    return restack(out, [[0, 1], [2, 3], [4]])
+
+
+def _split(img, axis, min_gap=12):
+    a = np.asarray(img.getchannel("A"))
+    prof = (a.max(axis=0) if axis == 0 else a.max(axis=1)) > 10  # axis 0: split columns, 1: rows
+    idx = np.where(prof)[0]
+    parts, start = [], idx[0]
+    for a, b in zip(idx[:-1], idx[1:]):
+        if b - a > min_gap:
+            parts.append((start, a + 1))
+            start = b
+    parts.append((start, idx[-1] + 1))
+    out = []
+    for a, b in parts:
+        box = (a, 0, b, img.height) if axis == 0 else (0, a, img.width, b)
+        piece = img.crop(box)
+        out.append(piece.crop(piece.getbbox()))
+    return out
+
+
+def restack(img, layout, gap=26):
+    """Split a product line-up into single cars and re-arrange them in rows."""
+    cars = [c for row in _split(img, 1) for c in _split(row, 0)]
+    rows = []
+    for r in layout:
+        items = [cars[k] for k in r if k < len(cars)]
+        h = max(c.height for c in items)
+        w = sum(c.width for c in items) + gap * (len(items) - 1)
+        row = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        x = 0
+        for c in items:
+            row.alpha_composite(c, (x, h - c.height))
+            x += c.width + gap
+        rows.append(row)
+    W = max(r.width for r in rows)
+    H = sum(r.height for r in rows) + gap * (len(rows) - 1)
+    res = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    y = 0
+    for r in rows:
+        res.alpha_composite(r, ((W - r.width) // 2, y))
+        y += r.height + gap
+    return res
+
+
 def main():
     from rembg import new_session
     os.makedirs(OUT, exist_ok=True)
@@ -113,6 +182,8 @@ def main():
         "godzilla": lambda: poly_card_cutout(os.path.join(SRC, "godzilla.jpg")),
         "tfox": lambda: poly_card_cutout(os.path.join(SRC, "tfox.jpg")),
         "brian_set": lambda: card_cutout(os.path.join(SRC, "brian_set.jpg")),
+        "godzilla_car": lambda: ai_cutout(os.path.join(SRC, "godzilla_car.jpg"), sess),
+        "ff_set_cars": lambda: white_studio_cutout(os.path.join(SRC, "ff_set_cars.webp"), sess),
     }
     for name, fn in jobs.items():
         fn().save(os.path.join(OUT, name + ".png"))

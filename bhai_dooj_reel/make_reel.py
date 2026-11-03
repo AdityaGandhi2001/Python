@@ -40,11 +40,12 @@ PRODUCTS = [
     dict(file="mustang.jpg", brand="HOT WHEELS  •  RLC", title=["MUSTANG", "SHELBY GT500"],
          line="Original RLC  •  Spectraflame Blue", glow=(30, 110, 255), car=True),
     dict(file="godzilla.jpg", brand="HOT WHEELS  PREMIUM", title=["NISSAN SKYLINE", "GODZILLA"],
-         line="GT-R BNR34  •  Pop Culture", glow=(200, 60, 50)),
+         line="GT-R BNR34  •  Pop Culture", glow=(200, 60, 50), with_car="godzilla_car"),
     dict(file="tfox.jpg", brand="HOT WHEELS  •  SIGNED", title=["T-FOX", "GT-R GUACZILLA"],
-         line="Autographed card  •  Nissan GT-R R35", glow=(120, 220, 40)),
-    dict(file="brian_set.jpg", brand="FAST & FURIOUS  •  SILVER SERIES", title=["BRIAN O'CONNER", "SET"],
-         line="All 5 cars  •  Complete set", glow=(255, 130, 20), wide=True),
+         line="Autographed card  •  Nissan GT-R R35", glow=(120, 220, 40),
+         scene="tfox_car_diorama.jpg"),
+    dict(file="ff_set_cars.webp", brand="FAST & FURIOUS  •  PREMIUM", title=["BRIAN O'CONNER", "SET"],
+         line="All 5 cars  •  Metal/Metal  •  Real Riders", glow=(255, 130, 20), wide=True),
 ]
 N = len(PRODUCTS)
 
@@ -190,7 +191,20 @@ for p in PRODUCTS:
     if not os.path.exists(path):  # fallback: quick in-script background removal
         path = None
     im = Image.open(path).convert("RGBA") if path else cutout(os.path.join(ASSETS, "products", p["file"]))
-    if p.get("car"):
+    if p.get("with_car"):
+        car = Image.open(os.path.join(ASSETS, "products", "cut", p["with_car"] + ".png")).convert("RGBA")
+        card = fit_size(im, 2000, 700)
+        car = fit_size(car, 900, 2000)
+        canvas = Image.new("RGBA", (1000, 700 + int(car.height * 0.62)), (0, 0, 0, 0))
+        canvas.alpha_composite(card, (1000 - card.width - 30, 0))
+        sh = Image.new("L", canvas.size, 0)  # shadow of the car on the card
+        ImageDraw.Draw(sh).rounded_rectangle((60, canvas.height - car.height + 30, 60 + car.width,
+                                              canvas.height + 10), radius=60, fill=150)
+        canvas.paste((0, 0, 0, 255), (0, 0), sh.filter(ImageFilter.GaussianBlur(28)))
+        canvas.alpha_composite(car, (40, canvas.height - car.height))
+        im = canvas
+        maxw, maxh = 1000, 1000
+    elif p.get("car"):
         maxw, maxh = 1000, 700
     elif p.get("wide"):
         maxw, maxh = 1000, 900
@@ -198,6 +212,14 @@ for p in PRODUCTS:
         maxw, maxh = 860, 960
     p["img"] = with_reflection(fit_size(im, maxw, maxh), strength=0.3 if p.get("car") else 0.22,
                                frac=0.45 if p.get("car") else 0.28)
+
+# real photo "action shot" plates (cropped to 9:16, banner removed)
+for p in PRODUCTS:
+    if p.get("scene"):
+        ph = Image.open(os.path.join(ASSETS, "products", p["scene"])).convert("RGB")
+        ph = ph.crop((80, 0, 412, 590))  # drop the caption strip at the bottom
+        ph = ph.resize((int(W * 1.08), int(H * 1.08)), Image.LANCZOS)
+        p["plate"] = ph.filter(ImageFilter.UnsharpMask(radius=3, percent=80, threshold=2))
 
 # ----------------------------------------------------------------- backdrops
 WALL = Image.open(os.path.join(ASSETS, "wall.jpg")).convert("RGB")
@@ -384,19 +406,50 @@ def scene_intro(t):
     return frame
 
 
-def scene_gift(t, i):
+def scene_photo(t, i):
+    """First half of a gift with a real photo: full-bleed shot + titles."""
     p = PRODUCTS[i]
-    frame = BACKDROPS[i].copy().convert("RGBA")
-
-    # header
+    z = 1.0 + 0.06 * (t / (3 * BEAT)) + 0.01 * beat_pulse(t)
+    dx, dy = handheld(t, 4)
+    plate = p["plate"]
+    frame = zoom_crop(plate, z, cy=plate.height * 0.52, dx=dx, dy=dy)
+    arr = np.asarray(frame).astype(np.float32)
+    y = np.arange(H)[:, None, None]
+    shade = np.clip(1 - 0.85 * np.clip((760 - y) / 520, 0, 1), 0, 1) * \
+        np.clip(1 - 0.75 * np.clip((y - 1500) / 300, 0, 1), 0, 1)
+    frame = Image.fromarray((arr * shade * VIG).astype(np.uint8)).convert("RGBA")
     a = ease(t / 0.35)
     draw_text(frame, 150, f"GIFT  {i + 1:02d} / {N:02d}", SEMI(30), GOLD, a, track=8, shadow=False)
     ImageDraw.Draw(frame).line((W / 2 - 40 * a, 212, W / 2 + 40 * a, 212), fill=GOLD + (255,), width=3)
     draw_text(frame, 240, p["brand"], SEMI(32), SOFT, ease((t - 0.1) / 0.4), track=6, shadow=False)
-    y = 300
+    yy = 300
     for k, line in enumerate(p["title"]):
         size = fit(line, "Anton-Regular", W - 120, 150 if k == 0 else 120)
         tt = t - 0.12 - 0.1 * k
+        draw_text(frame, yy, line, font(size), WHITE if k == 0 else GOLD, ease(tt / 0.3), rise=1 - ease(tt / 0.4))
+        yy += int(size * 1.25)
+    draw_text(frame, 1720, "Signed by TFox", SEMI(40), GOLD, ease((t - 0.8) / 0.5), track=4)
+    return frame
+
+
+def scene_gift(t, i):
+    p = PRODUCTS[i]
+    if p.get("plate") is not None:
+        if t < 3 * BEAT:
+            return scene_photo(t, i)
+        t_hdr, t = t, t - 3 * BEAT  # second half: the signed card on the spotlight
+    frame = BACKDROPS[i].copy().convert("RGBA")
+    th = t if p.get("plate") is None else t + 5  # header already revealed after the photo
+
+    # header
+    a = ease(th / 0.35)
+    draw_text(frame, 150, f"GIFT  {i + 1:02d} / {N:02d}", SEMI(30), GOLD, a, track=8, shadow=False)
+    ImageDraw.Draw(frame).line((W / 2 - 40 * a, 212, W / 2 + 40 * a, 212), fill=GOLD + (255,), width=3)
+    draw_text(frame, 240, p["brand"], SEMI(32), SOFT, ease((th - 0.1) / 0.4), track=6, shadow=False)
+    y = 300
+    for k, line in enumerate(p["title"]):
+        size = fit(line, "Anton-Regular", W - 120, 150 if k == 0 else 120)
+        tt = th - 0.12 - 0.1 * k
         draw_text(frame, y, line, font(size), WHITE if k == 0 else GOLD, ease(tt / 0.3),
                   rise=1 - ease(tt / 0.4))
         y += int(size * 1.25)
@@ -500,7 +553,8 @@ def render(n):
         dt = t % (BEAT / 2)
         if dt < 0.06:
             f = Image.blend(f, Image.new("RGB", (W, H), (255, 245, 230)), 0.5 * (1 - dt / 0.06))
-    for c in [MONTAGE_S] + CUTS:
+    extra = [INTRO_S + GIFT_S * k + 3 * BEAT for k, p in enumerate(PRODUCTS) if p.get("scene")]
+    for c in [MONTAGE_S] + CUTS + extra:
         dt = t - c
         if -0.1 < dt < 0.12:
             f = whip(f, 1 - abs(dt) / 0.12)
