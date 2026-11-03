@@ -35,14 +35,14 @@ BEAT = 60 / BPM
 
 # ----------------------------------------------------------------- products
 PRODUCTS = [
-    dict(file="ferrari.webp", brand="HOT WHEELS  •  RLC", title=["FERRARI F40"],
-         line="Red Line Club Exclusive", glow=(230, 30, 40)),
+    dict(file="ferrari_car.png", brand="HOT WHEELS  •  RLC", title=["FERRARI F40"],
+         line="Red Line Club Exclusive", glow=(230, 30, 40), car=True),
     dict(file="mustang.jpg", brand="HOT WHEELS  •  RLC", title=["MUSTANG", "SHELBY GT500"],
          line="Original RLC  •  Spectraflame Blue", glow=(30, 110, 255), car=True),
-    dict(file="godzilla.jpg", brand="HOT WHEELS  PREMIUM", title=["NISSAN SKYLINE", "GODZILLA"],
-         line="GT-R BNR34  •  Pop Culture", glow=(200, 60, 50), with_car="godzilla_car"),
-    dict(file="tfox.jpg", brand="HOT WHEELS  •  SIGNED", title=["T-FOX", "GT-R GUACZILLA"],
-         line="Autographed card  •  Nissan GT-R R35", glow=(120, 220, 40),
+    dict(file="godzilla_car.png", brand="HOT WHEELS  PREMIUM", title=["NISSAN SKYLINE", "GODZILLA"],
+         line="GT-R BNR34  •  Pop Culture", glow=(200, 60, 50), car=True),
+    dict(file="tfox_car.png", brand="HOT WHEELS", title=["T-FOX", "GT-R GUACZILLA"],
+         line="Nissan GT-R R35", glow=(120, 220, 40), car=True,
          scene="tfox_car_diorama.jpg"),
     dict(file="ff_set_cars.webp", brand="FAST & FURIOUS  •  PREMIUM", title=["BRIAN O'CONNER", "SET"],
          line="All 5 cars  •  Metal/Metal  •  Real Riders", glow=(255, 130, 20), wide=True),
@@ -371,7 +371,7 @@ def scene_montage(t):
     tt = t - k * step
     frame = BACKDROPS[k].copy().convert("RGBA")
     im = p["img"]
-    fitk = min(1.0, 1250 / im.height, 980 / im.width)
+    fitk = min(1.0, 1250 / im.height, 860 / im.width)
     sc = fitk * (1.18 - 0.1 * ease(tt / step))
     im = im.resize((int(im.width * sc), int(im.height * sc)), Image.BICUBIC)
     frame.alpha_composite(im, (int(W / 2 - im.width / 2), int(960 - im.height / 2)))
@@ -409,7 +409,7 @@ def scene_intro(t):
 def scene_photo(t, i):
     """First half of a gift with a real photo: full-bleed shot + titles."""
     p = PRODUCTS[i]
-    z = 1.0 + 0.06 * (t / (3 * BEAT)) + 0.01 * beat_pulse(t)
+    z = 1.0 + 0.08 * (t / GIFT_S) + 0.01 * beat_pulse(t)
     dx, dy = handheld(t, 4)
     plate = p["plate"]
     frame = zoom_crop(plate, z, cy=plate.height * 0.52, dx=dx, dy=dy)
@@ -428,16 +428,15 @@ def scene_photo(t, i):
         tt = t - 0.12 - 0.1 * k
         draw_text(frame, yy, line, font(size), WHITE if k == 0 else GOLD, ease(tt / 0.3), rise=1 - ease(tt / 0.4))
         yy += int(size * 1.25)
-    draw_text(frame, 1720, "Signed by TFox", SEMI(40), GOLD, ease((t - 0.8) / 0.5), track=4)
+    draw_text(frame, 1690, p["line"], MED(40), SOFT, ease((t - 0.7) / 0.5))
+    draw_text(frame, 1760, "Perfect Bhai Dooj gift", SEMI(34), GOLD, ease((t - 1.2) / 0.5), track=3)
     return frame
 
 
 def scene_gift(t, i):
     p = PRODUCTS[i]
     if p.get("plate") is not None:
-        if t < 3 * BEAT:
-            return scene_photo(t, i)
-        t_hdr, t = t, t - 3 * BEAT  # second half: the signed card on the spotlight
+        return scene_photo(t, i)
     frame = BACKDROPS[i].copy().convert("RGBA")
     th = t if p.get("plate") is None else t + 5  # header already revealed after the photo
 
@@ -488,7 +487,7 @@ for _p in PRODUCTS:
     _im = _p["img"]
     _k = SHELF_H / _im.height if not _p.get("car") else SHELF_H * 0.62 / _im.height
     SHELF.append(_im.resize((int(_im.width * _k), int(_im.height * _k)), Image.LANCZOS))
-SHELF_GAP = 50
+SHELF_GAP = 110
 SHELF_W = sum(im.width for im in SHELF) + SHELF_GAP * len(SHELF)
 OUTRO_BG = product_backdrop((235, 170, 60))
 
@@ -553,8 +552,7 @@ def render(n):
         dt = t % (BEAT / 2)
         if dt < 0.06:
             f = Image.blend(f, Image.new("RGB", (W, H), (255, 245, 230)), 0.5 * (1 - dt / 0.06))
-    extra = [INTRO_S + GIFT_S * k + 3 * BEAT for k, p in enumerate(PRODUCTS) if p.get("scene")]
-    for c in [MONTAGE_S] + CUTS + extra:
+    for c in [MONTAGE_S] + CUTS:
         dt = t - c
         if -0.1 < dt < 0.12:
             f = whip(f, 1 - abs(dt) / 0.12)
