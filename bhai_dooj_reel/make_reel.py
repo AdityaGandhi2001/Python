@@ -54,13 +54,15 @@ THEMES = {
         out="bhai_dooj_reel.mp4", tag="BHAI DOOJ SPECIAL", big="5 GIFTS", sub="FOR YOUR BHAI",
         intro1="BHAI DOOJ", intro1b="aa raha hai...", intro2a="GIFT NAHI DOGI", intro2b="BHAI KO?",
         intro3="5 gifts jo bhai ko pakka pasand aayenge", intro3b="", intro3_at=6.0, text_beats=6, label="GIFT", footer="Perfect Bhai Dooj gift",
-        out1="IS BHAI DOOJ", out2="BHAI KO DO", out3="HOT WHEELS", fireworks=False),
+        out1="IS BHAI DOOJ", out2="BHAI KO DO", out3="HOT WHEELS",
+        cta="DM TO ORDER", cta_sub="Limited pieces  •  RLC  •  Premium", fireworks=False),
     "diwali": dict(
         out="diwali_reel.mp4", tag="DIWALI SPECIAL", big="5 CARS", sub="FOR YOUR COLLECTION",
         intro1="DIWALI", intro1b="aa gayi hai...", intro2a="IS DIWALI", intro2b="KUCH NAYA LO",
         intro3="Bhagwan aapke collection ko", intro3b="in 5 cars se bless kare", intro3_at=5.2,
         text_beats=8, label="PICK", footer="Add it to your collection",
-        out1="IS DIWALI", out2="COLLECTION", out3="BADHAO", fireworks=True),
+        out1="IS DIWALI", out2="COLLECTION", out3="BADHAO",
+        cta="HAPPY DIWALI", cta_sub="", fireworks=True),
 }
 import sys  # noqa: E402  (theme is needed before the timeline below is built)
 _theme = sys.argv[sys.argv.index("--theme") + 1] if "--theme" in sys.argv[:-1] else "bhaidooj"
@@ -571,8 +573,9 @@ def scene_outro(t):
     d = ImageDraw.Draw(frame)
     d.line((W / 2 - 160 * a, 1500, W / 2 + 160 * a, 1500), fill=GOLD + (255,), width=3)
     pulse = 1 + 0.03 * beat_pulse(t)
-    draw_text(frame, 1535, "DM TO ORDER", SEMI(int(66 * pulse)), WHITE, ease((b - 3.5) / 0.5), track=10)
-    draw_text(frame, 1645, "Limited pieces  •  RLC  •  Premium", MED(40), SOFT, ease((b - 4.5) / 0.5))
+    draw_text(frame, 1535, TH["cta"], SEMI(int(66 * pulse)), WHITE, ease((b - 3.5) / 0.5), track=10)
+    if TH["cta_sub"]:
+        draw_text(frame, 1645, TH["cta_sub"], MED(40), SOFT, ease((b - 4.5) / 0.5))
     return frame
 
 
