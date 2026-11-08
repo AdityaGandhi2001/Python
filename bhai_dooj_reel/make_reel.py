@@ -53,18 +53,21 @@ THEMES = {
     "bhaidooj": dict(
         out="bhai_dooj_reel.mp4", tag="BHAI DOOJ SPECIAL", big="5 GIFTS", sub="FOR YOUR BHAI",
         intro1="BHAI DOOJ", intro1b="aa raha hai...", intro2a="GIFT NAHI DOGI", intro2b="BHAI KO?",
-        intro3="5 gifts jo bhai ko pakka pasand aayenge", label="GIFT", footer="Perfect Bhai Dooj gift",
+        intro3="5 gifts jo bhai ko pakka pasand aayenge", intro3b="", intro3_at=6.0, text_beats=6, label="GIFT", footer="Perfect Bhai Dooj gift",
         out1="IS BHAI DOOJ", out2="BHAI KO DO", out3="HOT WHEELS", fireworks=False),
     "diwali": dict(
         out="diwali_reel.mp4", tag="DIWALI SPECIAL", big="5 CARS", sub="FOR YOUR COLLECTION",
         intro1="DIWALI", intro1b="aa gayi hai...", intro2a="IS DIWALI", intro2b="KUCH NAYA LO",
-        intro3="Collection mein add karo ye 5 cars", label="PICK", footer="Add it to your collection",
+        intro3="Bhagwan aapke collection ko", intro3b="in 5 cars se bless kare", intro3_at=5.2,
+        text_beats=8, label="PICK", footer="Add it to your collection",
         out1="IS DIWALI", out2="COLLECTION", out3="BADHAO", fireworks=True),
 }
-TH = THEMES["bhaidooj"]
+import sys  # noqa: E402  (theme is needed before the timeline below is built)
+_theme = sys.argv[sys.argv.index("--theme") + 1] if "--theme" in sys.argv[:-1] else "bhaidooj"
+TH = dict(THEMES.get(_theme, THEMES["bhaidooj"]))
 
 MONTAGE_S = 3 * BEAT       # hook: 5 quick product flashes on half-beats
-TEXT_S = 6 * BEAT          # "Bhai Dooj aa raha hai... gift nahi dogi bhai ko?"
+TEXT_S = TH["text_beats"] * BEAT          # "Bhai Dooj aa raha hai... gift nahi dogi bhai ko?"
 INTRO_S = MONTAGE_S + TEXT_S
 GIFT_S = 4 * BEAT
 OUTRO_S = 10 * BEAT
@@ -446,8 +449,11 @@ def scene_intro(t):
         draw_text(frame, 600, TH["intro2a"], font(fit(TH["intro2a"], "Anton-Regular", W - 100, 150)), WHITE, a, rise=1 - ease((b - 4.0) / 0.45))
         a = ease((b - 4.5) / 0.4)
         draw_text(frame, 790, TH["intro2b"], font(fit(TH["intro2b"], "Anton-Regular", W - 100, 190)), GOLD, a, rise=1 - ease((b - 4.5) / 0.45))
-        a = ease((b - 6.0) / 0.5)
-        draw_text(frame, 1150, TH["intro3"], MED(44), SOFT, a)
+        a = ease((b - TH["intro3_at"]) / 0.5)
+        draw_text(frame, 1150, TH["intro3"], MED(48), SOFT, a)
+        if TH["intro3b"]:
+            a2 = ease((b - TH["intro3_at"] - 0.4) / 0.5)
+            draw_text(frame, 1225, TH["intro3b"], SEMI(52), GOLD, a2)
     return frame
 
 
