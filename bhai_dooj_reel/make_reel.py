@@ -49,6 +49,20 @@ PRODUCTS = [
 ]
 N = len(PRODUCTS)
 
+THEMES = {
+    "bhaidooj": dict(
+        out="bhai_dooj_reel.mp4", tag="BHAI DOOJ SPECIAL", big="5 GIFTS", sub="FOR YOUR BHAI",
+        intro1="BHAI DOOJ", intro1b="aa raha hai...", intro2a="GIFT NAHI DOGI", intro2b="BHAI KO?",
+        intro3="5 gifts jo bhai ko pakka pasand aayenge", label="GIFT", footer="Perfect Bhai Dooj gift",
+        out1="IS BHAI DOOJ", out2="BHAI KO DO", out3="HOT WHEELS", fireworks=False),
+    "diwali": dict(
+        out="diwali_reel.mp4", tag="DIWALI SPECIAL", big="5 CARS", sub="FOR YOUR COLLECTION",
+        intro1="DIWALI", intro1b="aa gayi hai...", intro2a="IS DIWALI", intro2b="KUCH NAYA LO",
+        intro3="Collection mein add karo ye 5 cars", label="PICK", footer="Add it to your collection",
+        out1="IS DIWALI", out2="COLLECTION", out3="BADHAO", fireworks=True),
+}
+TH = THEMES["bhaidooj"]
+
 MONTAGE_S = 3 * BEAT       # hook: 5 quick product flashes on half-beats
 TEXT_S = 6 * BEAT          # "Bhai Dooj aa raha hai... gift nahi dogi bhai ko?"
 INTRO_S = MONTAGE_S + TEXT_S
@@ -357,6 +371,35 @@ def glint(im, pos):
     return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "RGBA")
 
 
+_fr = np.random.default_rng(5)
+BURSTS = [(_fr.uniform(150, W - 150), _fr.uniform(250, 900), k * 0.55 + _fr.uniform(0, 0.2),
+           [(_fr.uniform(0, 6.283), _fr.uniform(380, 700), _fr.integers(1, 4)) for _ in range(46)])
+          for k in range(12)]
+
+
+def fireworks(frame, t, period=4.4):
+    """Soft gold firework bursts (Diwali theme)."""
+    for cx, cy, t0, sparks in BURSTS:
+        dt = (t - t0) % period
+        if dt > 1.4:
+            continue
+        fade = (1 - dt / 1.4) ** 1.5
+        for ang, spd, k in sparks:
+            r = spd * (1 - math.exp(-dt * 3)) / 3 * 2.2
+            x = cx + math.cos(ang) * r
+            y = cy + math.sin(ang) * r + 90 * dt * dt
+            d = DOTS[k]
+            if fade < 0.99:
+                d = d.copy()
+                d.putalpha(d.getchannel("A").point(lambda v, f=fade: int(v * f)))
+            frame.alpha_composite(d, (int(x - d.width / 2), int(y - d.height / 2)))
+            if dt > 0.12:  # short trail
+                x2 = cx + math.cos(ang) * r * 0.82
+                y2 = cy + math.sin(ang) * r * 0.82 + 90 * dt * dt
+                d2 = DOTS[max(0, k - 1)]
+                frame.alpha_composite(d2, (int(x2 - d2.width / 2), int(y2 - d2.height / 2)))
+
+
 def scene_montage(t):
     """Opening hook: every gift flashes past on the half-beat."""
     step = BEAT / 2
@@ -364,8 +407,8 @@ def scene_montage(t):
     if k >= N:  # last half beat: gold title card
         frame = Image.new("RGBA", (W, H), (10, 10, 14, 255))
         tt = t - N * step
-        draw_text(frame, 700, "5 GIFTS", font(int(210 + 40 * (1 - ease(tt / 0.25)))), GOLD)
-        draw_text(frame, 1060, "FOR YOUR BHAI", SEMI(44), WHITE, track=10)
+        draw_text(frame, 700, TH["big"], font(int(210 + 40 * (1 - ease(tt / 0.25)))), GOLD)
+        draw_text(frame, 1060, TH["sub"], SEMI(44), WHITE, track=10)
         return frame
     p = PRODUCTS[k]
     tt = t - k * step
@@ -375,7 +418,7 @@ def scene_montage(t):
     sc = fitk * (1.18 - 0.1 * ease(tt / step))
     im = im.resize((int(im.width * sc), int(im.height * sc)), Image.BICUBIC)
     frame.alpha_composite(im, (int(W / 2 - im.width / 2), int(960 - im.height / 2)))
-    draw_text(frame, 150, "BHAI DOOJ SPECIAL", SEMI(36), GOLD, track=12)
+    draw_text(frame, 150, TH["tag"], SEMI(36), GOLD, track=12)
     return frame
 
 
@@ -386,23 +429,25 @@ def scene_intro(t):
     dim = 0.65
     arr = np.asarray(frame).astype(np.float32) * dim * VIG
     frame = Image.fromarray(arr.astype(np.uint8)).convert("RGBA")
+    if TH["fireworks"]:
+        fireworks(frame, t)
 
     b = t / BEAT * (8 * BEAT / TEXT_S)  # text animation was timed for 8 beats
     if b < 4:
         a = ease((b - 0.1) / 0.4)
-        draw_text(frame, 560, "BHAI DOOJ", font(230), GOLD, a, rise=1 - ease((b - 0.1) / 0.5))
+        draw_text(frame, 560, TH["intro1"], font(fit(TH["intro1"], "Anton-Regular", W - 100, 230)), GOLD, a, rise=1 - ease((b - 0.1) / 0.5))
         a = ease((b - 1.0) / 0.5)
-        draw_text(frame, 860, "aa raha hai...", MED(70), WHITE, a)
+        draw_text(frame, 860, TH["intro1b"], MED(70), WHITE, a)
         out = clamp((b - 3.6) / 0.4)
         if out > 0:
             frame = Image.blend(frame, Image.fromarray((arr * 0.6).astype(np.uint8)).convert("RGBA"), out)
     else:
         a = ease((b - 4.0) / 0.4)
-        draw_text(frame, 600, "GIFT NAHI DOGI", font(150), WHITE, a, rise=1 - ease((b - 4.0) / 0.45))
+        draw_text(frame, 600, TH["intro2a"], font(fit(TH["intro2a"], "Anton-Regular", W - 100, 150)), WHITE, a, rise=1 - ease((b - 4.0) / 0.45))
         a = ease((b - 4.5) / 0.4)
-        draw_text(frame, 790, "BHAI KO?", font(190), GOLD, a, rise=1 - ease((b - 4.5) / 0.45))
+        draw_text(frame, 790, TH["intro2b"], font(fit(TH["intro2b"], "Anton-Regular", W - 100, 190)), GOLD, a, rise=1 - ease((b - 4.5) / 0.45))
         a = ease((b - 6.0) / 0.5)
-        draw_text(frame, 1150, "5 gifts jo bhai ko pakka pasand aayenge", MED(44), SOFT, a)
+        draw_text(frame, 1150, TH["intro3"], MED(44), SOFT, a)
     return frame
 
 
@@ -419,7 +464,7 @@ def scene_photo(t, i):
         np.clip(1 - 0.75 * np.clip((y - 1500) / 300, 0, 1), 0, 1)
     frame = Image.fromarray((arr * shade * VIG).astype(np.uint8)).convert("RGBA")
     a = ease(t / 0.35)
-    draw_text(frame, 150, f"GIFT  {i + 1:02d} / {N:02d}", SEMI(30), GOLD, a, track=8, shadow=False)
+    draw_text(frame, 150, f"{TH['label']}  {i + 1:02d} / {N:02d}", SEMI(30), GOLD, a, track=8, shadow=False)
     ImageDraw.Draw(frame).line((W / 2 - 40 * a, 212, W / 2 + 40 * a, 212), fill=GOLD + (255,), width=3)
     draw_text(frame, 240, p["brand"], SEMI(32), SOFT, ease((t - 0.1) / 0.4), track=6, shadow=False)
     yy = 300
@@ -429,7 +474,7 @@ def scene_photo(t, i):
         draw_text(frame, yy, line, font(size), WHITE if k == 0 else GOLD, ease(tt / 0.3), rise=1 - ease(tt / 0.4))
         yy += int(size * 1.25)
     draw_text(frame, 1690, p["line"], MED(40), SOFT, ease((t - 0.45) / 0.4))
-    draw_text(frame, 1760, "Perfect Bhai Dooj gift", SEMI(34), GOLD, ease((t - 0.75) / 0.4), track=3)
+    draw_text(frame, 1760, TH["footer"], SEMI(34), GOLD, ease((t - 0.75) / 0.4), track=3)
     return frame
 
 
@@ -442,7 +487,7 @@ def scene_gift(t, i):
 
     # header
     a = ease(th / 0.35)
-    draw_text(frame, 150, f"GIFT  {i + 1:02d} / {N:02d}", SEMI(30), GOLD, a, track=8, shadow=False)
+    draw_text(frame, 150, f"{TH['label']}  {i + 1:02d} / {N:02d}", SEMI(30), GOLD, a, track=8, shadow=False)
     ImageDraw.Draw(frame).line((W / 2 - 40 * a, 212, W / 2 + 40 * a, 212), fill=GOLD + (255,), width=3)
     draw_text(frame, 240, p["brand"], SEMI(32), SOFT, ease((th - 0.1) / 0.4), track=6, shadow=False)
     y = 300
@@ -477,7 +522,7 @@ def scene_gift(t, i):
     a = ease((t - 0.45) / 0.4)
     draw_text(frame, 1690, p["line"], MED(40), SOFT, a)
     a = ease((t - 0.75) / 0.4)
-    draw_text(frame, 1760, "Perfect Bhai Dooj gift", SEMI(34), GOLD, a, track=3)
+    draw_text(frame, 1760, TH["footer"], SEMI(34), GOLD, a, track=3)
     return frame
 
 
@@ -495,10 +540,12 @@ OUTRO_BG = product_backdrop((235, 170, 60))
 def scene_outro(t):
     frame = OUTRO_BG.copy().convert("RGBA")
     sparkle(frame, t + 30, 0.9)
+    if TH["fireworks"]:
+        fireworks(frame, t + 2.0)
     b = t / BEAT
-    draw_text(frame, 190, "IS BHAI DOOJ", SEMI(40), GOLD, ease(b / 0.6), track=10)
-    draw_text(frame, 260, "BHAI KO DO", font(170), WHITE, ease((b - 0.5) / 0.4), rise=1 - ease((b - 0.5) / 0.45))
-    draw_text(frame, 460, "HOT WHEELS", font(210), GOLD, ease((b - 1.0) / 0.4), rise=1 - ease((b - 1.0) / 0.45))
+    draw_text(frame, 190, TH["out1"], SEMI(40), GOLD, ease(b / 0.6), track=10)
+    draw_text(frame, 260, TH["out2"], font(fit(TH["out2"], "Anton-Regular", W - 100, 170)), WHITE, ease((b - 0.5) / 0.4), rise=1 - ease((b - 0.5) / 0.45))
+    draw_text(frame, 460, TH["out3"], font(fit(TH["out3"], "Anton-Regular", W - 80, 210)), GOLD, ease((b - 1.0) / 0.4), rise=1 - ease((b - 1.0) / 0.45))
 
     # endless shelf of all five gifts gliding left
     a = ease((b - 1.5) / 0.6)
@@ -715,9 +762,13 @@ def make_music(path, seconds):
 # ----------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=os.path.join(HERE, "bhai_dooj_reel.mp4"))
+    ap.add_argument("--theme", choices=sorted(THEMES), default="bhaidooj")
+    ap.add_argument("--out", default=None)
     ap.add_argument("--no-music", action="store_true")
     args = ap.parse_args()
+    TH.clear()
+    TH.update(THEMES[args.theme])
+    args.out = args.out or os.path.join(HERE, TH["out"])
 
     frames = int(TOTAL_S * FPS)
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
