@@ -35,13 +35,15 @@ CARS = [
     ("MIX F", "FERRARI 12CILINDRI", "gold ferrari?? instant cop", "🤑"),
     ("MIX ?", "PORSCHE 911 CARRERA T", "no notes", "🫡"),
     ("MIX ?", "1967 SHELBY GT-500", "golden era", "🏆"),
-    ("MIX J", "???", "still under wraps", "👀"),
 ]
+HIDDEN = ["J", "K", "L", "M", "N", "P", "Q"]  # mixes not revealed yet
+TOTAL_MIXES = len(CARS) + len(HIDDEN)  # 15
 
-HOOK_BEATS, CAR_BEATS, RECAP_BEATS, OUTRO_BEATS = 8, 4, 8, 8
+HOOK_BEATS, CAR_BEATS, HIDDEN_BEATS, RECAP_BEATS, OUTRO_BEATS = 8, 4, 8, 10, 8
 T_HOOK = HOOK_BEATS * BEAT
 T_CAR = CAR_BEATS * BEAT
-T_CARS = T_CAR * len(CARS)
+T_HIDDEN = HIDDEN_BEATS * BEAT
+T_CARS = T_CAR * len(CARS) + T_HIDDEN
 T_RECAP = RECAP_BEATS * BEAT
 T_OUTRO = OUTRO_BEATS * BEAT
 TOTAL = T_HOOK + T_CARS + T_RECAP + T_OUTRO
@@ -281,7 +283,8 @@ def scene_hook(base, t, cars):
     if t > BEAT * 6:
         f = font(F_XB, 52)
         bounce = 12 * abs(math.sin((t - BEAT * 6) * math.pi / BEAT))
-        draw_text_c(base, W / 2, 1640 + bounce, "every one so far ↓", f, (255, 255, 255))
+        draw_text_c(base, W / 2, 1640 + bounce, f"{len(CARS)}/{TOTAL_MIXES} revealed so far ↓", f,
+                    (255, 255, 255))
 
 
 def scene_car(base, t, i, car, side):
@@ -296,7 +299,7 @@ def scene_car(base, t, i, car, side):
 
     # counter chip
     f = font(F_XB, 38)
-    caption_box(base, W / 2, 250, f"STH 2027  ·  {i + 1:02d}/{len(CARS):02d}", f, (255, 255, 255),
+    caption_box(base, W / 2, 250, f"STH 2027  ·  {i + 1:02d}/{TOTAL_MIXES}", f, (255, 255, 255),
                 (255, 255, 255, 28), 1.0)
 
     # mix label slam
@@ -344,30 +347,54 @@ def scene_car(base, t, i, car, side):
     return pin < 0.6 or pout > 0  # speed-lines hint
 
 
-def scene_recap(base, t, cars):
+def scene_hidden(base, t, cover):
+    """The 7 mixes nobody has seen yet: covers pop in on half-beats."""
+    slam_text(base, W / 2, 330, "STILL HIDDEN", F_BLACK_I, 130, (255, 255, 255), p_(t, 0, 0.22),
+              start=2)
+    acc = (90, 130, 255)
+    small = cover.img.resize((300, int(cover.img.height * 300 / cover.img.width)), Image.LANCZOS)
+    pos = [(r, c) for r in range(3) for c in range(3)][:len(HIDDEN)]
+    pos[-1] = (2, 1)  # centre the 7th
+    for k, (letter, (r, c)) in enumerate(zip(HIDDEN, pos)):
+        pk = p_(t, BEAT * 0.5 + k * BEAT * 0.5, 0.22)
+        if pk <= 0:
+            continue
+        s = back_out(pk)
+        cx, cy = 190 + c * 350, 640 + r * 330
+        im = small.resize((max(1, int(small.width * s)), max(1, int(small.height * s))), Image.BICUBIC)
+        wob = 4 * math.sin(t * 8 + k)
+        base.alpha_composite(im, (int(cx - im.width / 2), int(cy - im.height / 2 + wob)))
+        draw_text_c(base, cx, cy + 105 * s, f"MIX {letter}", font(F_BLACK_I, max(10, 46 * s)), acc,
+                    stroke=4, sfill=(0, 0, 0))
+    caption_box(base, W / 2, 1640, f"{len(HIDDEN)} more coming", font(F_BLACK, 60), (0, 0, 0),
+                (255, 255, 255), p_(t, BEAT * 4.5, 0.28), emo="👀", rot=-3)
+
+
+def scene_recap(base, t, cars, cover):
     slam_text(base, W / 2, 330, "THE LINE-UP", F_BLACK_I, 140, (255, 255, 255), p_(t, 0, 0.25),
               start=2)
-    caption_box(base, W / 2, 470, "(so far)", font(F_BLACK, 50), (0, 0, 0), (255, 214, 0),
-                p_(t, BEAT, 0.25), rot=-2)
+    caption_box(base, W / 2, 470, f"{len(CARS)}/{TOTAL_MIXES} so far", font(F_BLACK, 50), (0, 0, 0),
+                (255, 214, 0), p_(t, BEAT, 0.25), rot=-2)
     tw = 330
-    for i, car in enumerate(cars):
-        pi_ = p_(t, BEAT * 1.5 + i * BEAT * 0.5, 0.25)
+    slots = [(car, CARS[i][0], car.accent) for i, car in enumerate(cars)] + \
+        [(cover, f"MIX {h}", (90, 130, 255)) for h in HIDDEN]
+    for i, (car, lab, accent) in enumerate(slots):
+        pi_ = p_(t, BEAT * 1.5 + i * BEAT * 0.35, 0.25)
         if pi_ <= 0:
             continue
         r, c = divmod(i, 3)
         cx = 190 + c * 350
-        cy = 720 + r * 330
+        cy = 660 + r * 245
         s = back_out(pi_)
         d = ImageDraw.Draw(base)
-        tile_w, tile_h = 330 * s, 300 * s
+        tile_w, tile_h = 330 * s, 225 * s
         d.rounded_rectangle((cx - tile_w / 2, cy - tile_h / 2, cx + tile_w / 2, cy + tile_h / 2),
-                            radius=int(26 * s), fill=car.accent + (60,),
-                            outline=car.accent + (220,), width=3)
-        im = car.img.resize((max(1, int(tw * 0.9 * s)), max(1, int(car.img.height * tw * 0.9 * s / car.img.width))),
+                            radius=int(22 * s), fill=accent + (60,), outline=accent + (220,), width=3)
+        iw = tw * 0.8 * s
+        im = car.img.resize((max(1, int(iw)), max(1, int(car.img.height * iw / car.img.width))),
                             Image.LANCZOS)
-        base.alpha_composite(im, (int(cx - im.width / 2), int(cy - im.height / 2 - 20 * s)))
-        lab = CARS[i][0]
-        draw_text_c(base, cx, cy + tile_h / 2 - 40 * s, lab, font(F_BLACK_I, max(10, 40 * s)),
+        base.alpha_composite(im, (int(cx - im.width / 2), int(cy - im.height / 2 - 22 * s)))
+        draw_text_c(base, cx, cy + tile_h / 2 - 32 * s, lab, font(F_BLACK_I, max(10, 36 * s)),
                     (255, 255, 255))
 
 
@@ -541,7 +568,7 @@ def synth_audio(path):
             add(stab([root * 8, root * 8 * 1.189, root * 8 * 1.498]), at)
 
     add(riser(T_HOOK - 0.1), 0.05)
-    for i in range(len(CARS)):
+    for i in range(len(CARS) + 1):  # +1: the "still hidden" section
         add(impact(), T_HOOK + i * T_CAR, 0.7 if i else 1.0)
     add(impact(), T_HOOK + T_CARS, 0.8)
     add(impact(), T_HOOK + T_CARS + T_RECAP, 0.8)
@@ -560,14 +587,18 @@ def synth_audio(path):
 
 
 # ------------------------------------------------------------------ main
-def render_frame(t, cars, grid, vignette, grain, fi):
+def render_frame(t, cars, cover, grid, vignette, grain, fi):
     hook_acc = (255, 40, 90)
-    in_cars = T_HOOK <= t < T_HOOK + T_CARS
+    t_hid = T_HOOK + T_CAR * len(CARS)
+    in_cars = T_HOOK <= t < t_hid
+    in_hidden = t_hid <= t < T_HOOK + T_CARS
     if t < T_HOOK:
         acc, lt = hook_acc, t
     elif in_cars:
         k = int((t - T_HOOK) // T_CAR)
         acc, lt = cars[k].accent, t - T_HOOK - k * T_CAR
+    elif in_hidden:
+        acc, lt = (60, 90, 255), t - t_hid
     elif t < T_HOOK + T_CARS + T_RECAP:
         acc, lt = (255, 214, 0), t - T_HOOK - T_CARS
     else:
@@ -581,8 +612,10 @@ def render_frame(t, cars, grid, vignette, grain, fi):
         side = 1 if k % 2 == 0 else -1
         fast = scene_car(frame, lt, k, cars[k], side)
         sl = 1.0 if fast else 0.25
+    elif in_hidden:
+        scene_hidden(frame, lt, cover)
     elif t < T_HOOK + T_CARS + T_RECAP:
-        scene_recap(frame, lt, cars)
+        scene_recap(frame, lt, cars, cover)
     else:
         scene_outro(frame, lt, cars)
     speed_lines(frame, t, acc, sl)
@@ -590,7 +623,7 @@ def render_frame(t, cars, grid, vignette, grain, fi):
     # beat-synced camera: zoom punch on every beat, shake on section hits
     bp = (t % BEAT) / BEAT
     punch = 1 + 0.045 * math.exp(-bp * 7)
-    hit_times = [0, BEAT * 2, BEAT * 3, BEAT * 4] + [T_HOOK + i * T_CAR for i in range(len(CARS))] \
+    hit_times = [0, BEAT * 2, BEAT * 3, BEAT * 4] + [T_HOOK + i * T_CAR for i in range(len(CARS) + 1)] \
         + [T_HOOK + T_CARS, T_HOOK + T_CARS + T_RECAP]
     since = min((t - h for h in hit_times if t >= h), default=9)
     shake_amt = 26 * math.exp(-since * 14) if since < 0.4 else 0
@@ -613,6 +646,7 @@ def render_frame(t, cars, grid, vignette, grain, fi):
 
 def main(cars_dir, out):
     cars = [Car(f"{cars_dir}/sth{i}.png") for i in range(len(CARS))]
+    cover = Car(f"{cars_dir}/sth{len(CARS)}.png")  # the covered "?" car
     grid, vignette, grain = make_grid(), make_vignette(), make_grain()
     wav = out.rsplit(".", 1)[0] + "_beat.wav"
     synth_audio(wav)
@@ -624,7 +658,7 @@ def main(cars_dir, out):
          "-c:a", "aac", "-b:a", "256k", "-shortest", "-movflags", "+faststart", out],
         stdin=subprocess.PIPE)
     for fi in range(nframes):
-        ff.stdin.write(render_frame(fi / FPS, cars, grid, vignette, grain, fi).tobytes())
+        ff.stdin.write(render_frame(fi / FPS, cars, cover, grid, vignette, grain, fi).tobytes())
     ff.stdin.close()
     ff.wait()
     print(f"wrote {out}: {TOTAL:.1f}s, {nframes} frames")
