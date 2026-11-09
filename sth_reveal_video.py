@@ -1,10 +1,12 @@
 """
 "2027 STH revealed" - fast, beat-synced Gen Z style Instagram reel.
 
-Inputs : a folder of car cutouts car0.png .. car8.png (see sth_prep_cars.py)
+Inputs : a folder with diecast cutouts sth0.png .. sth8.png (see sth_prep_cars.py)
+         and real-car cutouts real0.png .. real7.png (Wikimedia Commons photos,
+         credits in photo_credits.json)
 Output : 1080x1920 30fps MP4 with an original synthesized trap beat.
 
-    python sth_reveal_video.py cars_dir out.mp4
+    python sth_reveal_video.py sth_assets out.mp4
 """
 
 import math
@@ -38,10 +40,17 @@ CARS = [
     ("MIX J", "???", "still under wraps", "👀"),
 ]
 
-HOOK_BEATS, CAR_BEATS, RECAP_BEATS, OUTRO_BEATS = 8, 4, 8, 8
+HOOK_BEATS, CAR_BEATS, MYSTERY_BEATS, RECAP_BEATS, OUTRO_BEATS = 8, 6, 4, 8, 8
+STH_BEAT = 3  # beat (within a car scene) where the 1:64 diecast slams in
 T_HOOK = HOOK_BEATS * BEAT
-T_CAR = CAR_BEATS * BEAT
-T_CARS = T_CAR * len(CARS)
+# start time and length of every car scene
+SCHED = []
+_t = T_HOOK
+for _lab, *_ in CARS:
+    _d = (MYSTERY_BEATS if _lab == "MIX J" else CAR_BEATS) * BEAT
+    SCHED.append((_t, _d))
+    _t += _d
+T_CARS = _t - T_HOOK
 T_RECAP = RECAP_BEATS * BEAT
 T_OUTRO = OUTRO_BEATS * BEAT
 TOTAL = T_HOOK + T_CARS + T_RECAP + T_OUTRO
@@ -259,15 +268,15 @@ def speed_lines(base, t, accent, strength):
                width=rnd.choice([2, 3, 4]))
 
 
-def scene_hook(base, t, cars):
+def scene_hook(base, t, reals):
+    cars = reals
     beat = t / BEAT
     # flashing car silhouettes behind the title (quick teaser cuts every half beat)
     k = int(beat * 2) % len(cars)
     if beat < 6:
         car = cars[k]
         sil = car.img.copy()
-        sil = sil.resize((int(sil.width * 1.1), int(sil.height * 1.1)))
-        a = sil.getchannel("A").point(lambda v: int(v * 0.28))
+        a = sil.getchannel("A").point(lambda v: int(v * 0.35))
         sil.putalpha(a)
         base.alpha_composite(sil, (int(W / 2 - sil.width / 2), 1400 - sil.height // 2))
 
@@ -284,64 +293,97 @@ def scene_hook(base, t, cars):
         draw_text_c(base, W / 2, 1640 + bounce, "every one so far ↓", f, (255, 255, 255))
 
 
-def scene_car(base, t, i, car, side):
-    label, name, vibe, emo = CARS[i]
-    acc = car.accent
-    mystery = label == "MIX J"
-
-    # giant scrolling outline marquee
-    marquee(base, 1010, label, font(F_BLACK_I, 230), acc, t * 260 + i * 300, outline=True, alpha=110)
-    marquee(base, 380, name, font(F_BLACK_I, 120), (255, 255, 255), -t * 180 - i * 200,
-            outline=True, alpha=35)
-
-    # counter chip
-    f = font(F_XB, 38)
-    caption_box(base, W / 2, 250, f"STH 2027  ·  {i + 1:02d}/{len(CARS):02d}", f, (255, 255, 255),
-                (255, 255, 255, 28), 1.0)
-
-    # mix label slam
-    slam_text(base, W / 2, 560, label, F_BLACK_I, 210, acc, p_(t, 0, 0.22), stroke=0, start=1.9)
-
-    # car slide-in with motion trail, then float
-    pin = expo_out(p_(t, 0.02, 0.32))
-    pout = clamp((t - (T_CAR - 0.12)) / 0.12)
-    dx = side * (1 - pin) * W * 1.1 - side * pout * W * 1.2
-    float_y = 10 * math.sin(t * 3.2)
-    cx, cy = W / 2 + dx, 1180 + float_y
+def draw_car(base, car, cx, cy, t, side, pin, pout, glow=True, reflection=True):
     x0, y0 = int(cx - car.img.width / 2), int(cy - car.img.height / 2)
-
-    gp = car.glow_pad
-    glow_a = 0.6 + 0.4 * math.sin(t * 6) ** 2
-    gl = car.glow
-    if glow_a < 1:
-        gl = gl.copy()
+    if glow:
+        gp = car.glow_pad
+        glow_a = 0.6 + 0.4 * math.sin(t * 6) ** 2
+        gl = car.glow.copy()
         gl.putalpha(gl.getchannel("A").point(lambda v: int(v * glow_a)))
-    base.alpha_composite(gl, (x0 - gp, y0 - gp))
-    base.alpha_composite(car.reflection, (x0, y0 + car.img.height - 6))
-    moving = pin < 0.97 or pout > 0
-    if moving:
+        base.alpha_composite(gl, (x0 - gp, y0 - gp))
+    if reflection:
+        base.alpha_composite(car.reflection, (x0, y0 + car.img.height - 6))
+    if pin < 0.97 or pout > 0:
         for k, gh in enumerate(car.ghosts):
             base.alpha_composite(gh, (int(x0 + side * (k + 1) * 70), y0))
     base.alpha_composite(car.img, (x0, y0))
 
-    # name + vibe captions
-    nf = fit(name, F_BLACK, 74, W - 120)
-    if p_(t, BEAT, 0.01) > 0:
-        pn = p_(t, BEAT, 0.18)
-        lay = Image.new("RGBA", (W, 160), (0, 0, 0, 0))
-        draw_text_c(lay, W / 2, 80, name, nf, (255, 255, 255), stroke=6, sfill=(0, 0, 0))
-        yoff = int(30 * (1 - expo_out(pn)))
+
+def tag(base, x, y, txt, color, p, align="l"):
+    """Small label chip like 'THE REAL ONE'."""
+    if p <= 0:
+        return
+    f = font(F_BLACK_I, 40)
+    tw = text_w(txt, f)
+    a = int(255 * min(1, p * 3))
+    lay = Image.new("RGBA", (int(tw + 50), 70), (0, 0, 0, 0))
+    d = ImageDraw.Draw(lay)
+    d.rounded_rectangle((0, 0, tw + 48, 66), radius=14, fill=color + (a,))
+    d.text((24, 33), txt, font=f, fill=(0, 0, 0, a), anchor="lm")
+    dx = int((1 - expo_out(p)) * (-80 if align == "l" else 80))
+    xx = x if align == "l" else x - lay.width
+    base.alpha_composite(lay, (int(xx + dx), int(y)))
+
+
+def scene_car(base, t, i, real, sth, side, dur):
+    label, name, vibe, emo = CARS[i]
+    acc = sth.accent
+    mystery = real is None
+
+    # giant scrolling outline marquee + name ghost text
+    marquee(base, 760, label, font(F_BLACK_I, 230), acc, t * 260 + i * 300, outline=True, alpha=90)
+    marquee(base, 1290, name, font(F_BLACK_I, 120), (255, 255, 255), -t * 180 - i * 200,
+            outline=True, alpha=30)
+
+    f = font(F_XB, 38)
+    caption_box(base, W / 2, 230, f"STH 2027  ·  {i + 1:02d}/{len(CARS):02d}", f, (255, 255, 255),
+                (255, 255, 255, 28), 1.0)
+    slam_text(base, W / 2, 400, label, F_BLACK_I, 190, acc, p_(t, 0, 0.22), start=1.9)
+
+    pout = clamp((t - (dur - 0.12)) / 0.12)
+    if mystery:
+        pin = expo_out(p_(t, 0.02, 0.32))
+        dx = side * (1 - pin) * W * 1.1 - side * pout * W * 1.2
+        draw_car(base, sth, W / 2 + dx, 1000 + 10 * math.sin(t * 3.2), t, side, pin, pout)
+        caption_box(base, W / 2, 1400, vibe, font(F_BLACK, 56), (0, 0, 0), acc + (255,),
+                    p_(t, BEAT, 0.28), emo=emo, rot=3)
+        if t > BEAT * 2:
+            draw_text_c(base, W / 2, 1520, "stay tuned...", font(F_XB, 44), (255, 255, 255, 210))
+        return pin < 0.6 or pout > 0
+
+    # --- the real car: big hero, slides in, then drifts up a bit when the STH lands
+    pin = expo_out(p_(t, 0.02, 0.32))
+    t_sth = STH_BEAT * BEAT
+    lift = expo_out(p_(t, t_sth, 0.3))
+    dx = side * (1 - pin) * W * 1.1 - side * pout * W * 1.2
+    ry = 820 - 40 * lift + 8 * math.sin(t * 2.6)
+    draw_car(base, real, W / 2 + dx, ry, t, side, pin, pout, reflection=False)
+    tag(base, 50, ry - real.img.height / 2 - 40, "THE REAL ONE", (255, 255, 255), p_(t, BEAT * 0.5, 0.3))
+
+    nf = fit(name, F_BLACK, 70, W - 100)
+    pn = p_(t, BEAT, 0.18)
+    if pn > 0:
+        lay = Image.new("RGBA", (W, 150), (0, 0, 0, 0))
+        draw_text_c(lay, W / 2, 75, name, nf, (255, 255, 255), stroke=6, sfill=(0, 0, 0))
         if pn < 1:
             lay.putalpha(lay.getchannel("A").point(lambda v: int(v * pn)))
-        base.alpha_composite(lay, (0, 1430 - 80 + yoff))
-    caption_box(base, W / 2, 1580, vibe, font(F_BLACK, 56), (0, 0, 0), acc + (255,),
-                p_(t, BEAT * 2, 0.28), emo=emo, rot=(-3 if i % 2 else 3))
-    if label == "MIX ?":
-        draw_text_c(base, W / 2, 1690, "(mix not confirmed yet)", font(F_XB, 36),
-                    (255, 255, 255, 170))
-    if mystery and t > BEAT * 2.5:
-        draw_text_c(base, W / 2, 1690, "stay tuned...", font(F_XB, 40), (255, 255, 255, 200))
-    return pin < 0.6 or pout > 0  # speed-lines hint
+        base.alpha_composite(lay, (0, int(ry + real.img.height / 2 - 40 + 30 * (1 - expo_out(pn)))))
+
+    # --- the 1:64 STH slams in from the other side
+    ps = p_(t, t_sth, 0.28)
+    if ps > 0:
+        pin2 = expo_out(ps)
+        dx2 = -side * (1 - pin2) * W * 1.1 - side * pout * W * 1.2
+        sy = 1390 + 8 * math.sin(t * 3.4 + 1)
+        draw_car(base, sth, W / 2 + dx2, sy, t, -side, pin2, pout)
+        tag(base, W - 50, sy - sth.img.height / 2 - 60, "THE 1:64 STH", acc, p_(t, t_sth + 0.1, 0.3),
+            align="r")
+        caption_box(base, W / 2, 1700, vibe, font(F_BLACK, 54), (0, 0, 0), acc + (255,),
+                    p_(t, t_sth + BEAT, 0.28), emo=emo, rot=(-3 if i % 2 else 3))
+        if label == "MIX ?" and t > t_sth + BEAT * 1.5:
+            draw_text_c(base, W / 2, 1800, "(mix not confirmed yet)", font(F_XB, 34),
+                        (255, 255, 255, 170))
+    return pin < 0.6 or (0 < ps < 0.6) or pout > 0
 
 
 def scene_recap(base, t, cars):
@@ -386,8 +428,10 @@ def scene_outro(base, t, cars):
         xx = x + k * 340
         if -340 < xx < W:
             base.alpha_composite(im, (int(xx), 1430 - im.height // 2))
-    draw_text_c(base, W / 2, 1720, "pics: @your.choice_hotwheels", font(F_XB, 30),
+    draw_text_c(base, W / 2, 1700, "STH pics: @your.choice_hotwheels", font(F_XB, 28),
                 (255, 255, 255, 140))
+    draw_text_c(base, W / 2, 1745, "car photos: Wikimedia Commons (CC BY / BY-SA), credits in caption",
+                font(F_XB, 24), (255, 255, 255, 120))
 
 
 # ------------------------------------------------------------------ post FX
@@ -541,8 +585,10 @@ def synth_audio(path):
             add(stab([root * 8, root * 8 * 1.189, root * 8 * 1.498]), at)
 
     add(riser(T_HOOK - 0.1), 0.05)
-    for i in range(len(CARS)):
-        add(impact(), T_HOOK + i * T_CAR, 0.7 if i else 1.0)
+    for i, (st, _) in enumerate(SCHED):
+        add(impact(), st, 0.7 if i else 1.0)
+        if CARS[i][0] != "MIX J":
+            add(impact(), st + STH_BEAT * BEAT, 0.55)
     add(impact(), T_HOOK + T_CARS, 0.8)
     add(impact(), T_HOOK + T_CARS + T_RECAP, 0.8)
 
@@ -560,14 +606,26 @@ def synth_audio(path):
 
 
 # ------------------------------------------------------------------ main
-def render_frame(t, cars, grid, vignette, grain, fi):
+def car_index(t):
+    for k, (st, d) in enumerate(SCHED):
+        if st <= t < st + d:
+            return k
+    return len(SCHED) - 1
+
+
+HIT_TIMES = [0, BEAT * 2, BEAT * 3, BEAT * 4] + [st for st, _ in SCHED] \
+    + [st + STH_BEAT * BEAT for (st, _), c in zip(SCHED, CARS) if c[0] != "MIX J"] \
+    + [T_HOOK + T_CARS, T_HOOK + T_CARS + T_RECAP]
+
+
+def render_frame(t, cars, reals, grid, vignette, grain, fi):
     hook_acc = (255, 40, 90)
     in_cars = T_HOOK <= t < T_HOOK + T_CARS
     if t < T_HOOK:
         acc, lt = hook_acc, t
     elif in_cars:
-        k = int((t - T_HOOK) // T_CAR)
-        acc, lt = cars[k].accent, t - T_HOOK - k * T_CAR
+        k = car_index(t)
+        acc, lt = cars[k].accent, t - SCHED[k][0]
     elif t < T_HOOK + T_CARS + T_RECAP:
         acc, lt = (255, 214, 0), t - T_HOOK - T_CARS
     else:
@@ -576,10 +634,11 @@ def render_frame(t, cars, grid, vignette, grain, fi):
     frame = bg_frame(t, acc, grid)
     sl = 0.0
     if t < T_HOOK:
-        scene_hook(frame, lt, cars)
+        scene_hook(frame, lt, reals)
     elif in_cars:
         side = 1 if k % 2 == 0 else -1
-        fast = scene_car(frame, lt, k, cars[k], side)
+        real = reals[k] if k < len(reals) else None
+        fast = scene_car(frame, lt, k, real, cars[k], side, SCHED[k][1])
         sl = 1.0 if fast else 0.25
     elif t < T_HOOK + T_CARS + T_RECAP:
         scene_recap(frame, lt, cars)
@@ -590,9 +649,7 @@ def render_frame(t, cars, grid, vignette, grain, fi):
     # beat-synced camera: zoom punch on every beat, shake on section hits
     bp = (t % BEAT) / BEAT
     punch = 1 + 0.045 * math.exp(-bp * 7)
-    hit_times = [0, BEAT * 2, BEAT * 3, BEAT * 4] + [T_HOOK + i * T_CAR for i in range(len(CARS))] \
-        + [T_HOOK + T_CARS, T_HOOK + T_CARS + T_RECAP]
-    since = min((t - h for h in hit_times if t >= h), default=9)
+    since = min((t - h for h in HIT_TIMES if t >= h), default=9)
     shake_amt = 26 * math.exp(-since * 14) if since < 0.4 else 0
     rnd = random.Random(fi)
     shake = (rnd.uniform(-1, 1) * shake_amt, rnd.uniform(-1, 1) * shake_amt)
@@ -612,7 +669,8 @@ def render_frame(t, cars, grid, vignette, grain, fi):
 
 
 def main(cars_dir, out):
-    cars = [Car(f"{cars_dir}/car{i}.png") for i in range(len(CARS))]
+    cars = [Car(f"{cars_dir}/sth{i}.png", width=860) for i in range(len(CARS))]
+    reals = [Car(f"{cars_dir}/real{i}.png", width=980) for i in range(len(CARS) - 1)]
     grid, vignette, grain = make_grid(), make_vignette(), make_grain()
     wav = out.rsplit(".", 1)[0] + "_beat.wav"
     synth_audio(wav)
@@ -624,7 +682,7 @@ def main(cars_dir, out):
          "-c:a", "aac", "-b:a", "256k", "-shortest", "-movflags", "+faststart", out],
         stdin=subprocess.PIPE)
     for fi in range(nframes):
-        ff.stdin.write(render_frame(fi / FPS, cars, grid, vignette, grain, fi).tobytes())
+        ff.stdin.write(render_frame(fi / FPS, cars, reals, grid, vignette, grain, fi).tobytes())
     ff.stdin.close()
     ff.wait()
     print(f"wrote {out}: {TOTAL:.1f}s, {nframes} frames")
