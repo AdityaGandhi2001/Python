@@ -1,13 +1,10 @@
 """
-Bhai Dooj special reel: "2027 Super Treasure Hunts - revealed so far".
+"2027 STH revealed" - fast, beat-synced Gen Z style Instagram reel.
 
-Builds a 1080x1920 (Instagram Reel) MP4 from the line-up image:
-  festive intro -> one reveal per car -> recap grid -> outro.
-Frames are drawn with Pillow and piped straight into ffmpeg, with a small
-synthesized whoosh/chime sound track.
+Inputs : a folder of car cutouts car0.png .. car8.png (see sth_prep_cars.py)
+Output : 1080x1920 30fps MP4 with an original synthesized trap beat.
 
-Usage:
-    python sth_reveal_video.py <lineup_image.jpg> <output.mp4>
+    python sth_reveal_video.py cars_dir out.mp4
 """
 
 import math
@@ -20,405 +17,541 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 W, H, FPS = 1080, 1920, 30
-FONT_DIR = "/usr/share/fonts/opentype/inter/"
-F_BLACK = FONT_DIR + "Inter-Black.otf"
-F_XBOLD = FONT_DIR + "Inter-ExtraBold.otf"
-F_BOLD = FONT_DIR + "Inter-Bold.otf"
+BPM = 150
+BEAT = 60 / BPM  # 0.4 s
 
-GOLD = (255, 200, 60)
-SAFFRON = (255, 140, 20)
-CREAM = (255, 244, 220)
-WHITE = (255, 255, 255)
+INTER = "/usr/share/fonts/opentype/inter/"
+F_BLACK = INTER + "Inter-Black.otf"
+F_BLACK_I = INTER + "Inter-BlackItalic.otf"
+F_XB = INTER + "Inter-ExtraBold.otf"
+F_EMOJI = "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
 
-# (label, car name, column, row) - positions in the 3x3 grid of the source image
 CARS = [
-    ("MIX A", "'64 Lincoln Continental", 0, 0),
-    ("MIX B", "BMW M4 GT3", 1, 0),
-    ("MIX C", "Dodge D100", 2, 0),
-    ("MIX D", "'88 Mitsubishi Starion", 0, 1),
-    ("MIX E", "Aston Martin DB5 Safari Edition", 1, 1),
-    ("MIX F", "Ferrari 12Cilindri", 2, 1),
-    ("MIX ?", "Porsche 911 Carrera T", 0, 2),
-    ("MIX ?", "1967 Shelby GT-500", 1, 2),
-    ("MIX J", "Still under wraps...", 2, 2),
+    ("MIX A", "'64 LINCOLN CONTINENTAL", "purple drip unlocked", "💜"),
+    ("MIX B", "BMW M4 GT3", "that livery goes crazy", "🏁"),
+    ("MIX C", "DODGE D100", "off-road menace", "😤"),
+    ("MIX D", "'88 MITSUBISHI STARION", "80s rizz fr", "💙"),
+    ("MIX E", "ASTON MARTIN DB5 SAFARI", "lowkey the GOAT", "🐐"),
+    ("MIX F", "FERRARI 12CILINDRI", "gold ferrari?? instant cop", "🤑"),
+    ("MIX ?", "PORSCHE 911 CARRERA T", "no notes", "🫡"),
+    ("MIX ?", "1967 SHELBY GT-500", "golden era", "🏆"),
+    ("MIX J", "???", "still under wraps", "👀"),
 ]
-CELL_X = [(28, 403), (418, 793), (808, 1182)]
-CELL_Y = [(205, 400), (412, 602), (620, 806)]
 
-INTRO, PER_CAR, RECAP, OUTRO = 3.6, 2.1, 3.6, 3.4
+HOOK_BEATS, CAR_BEATS, RECAP_BEATS, OUTRO_BEATS = 8, 4, 8, 8
+T_HOOK = HOOK_BEATS * BEAT
+T_CAR = CAR_BEATS * BEAT
+T_CARS = T_CAR * len(CARS)
+T_RECAP = RECAP_BEATS * BEAT
+T_OUTRO = OUTRO_BEATS * BEAT
+TOTAL = T_HOOK + T_CARS + T_RECAP + T_OUTRO
 
-_font_cache = {}
+_fonts = {}
 
 
 def font(path, size):
-    key = (path, size)
-    if key not in _font_cache:
-        _font_cache[key] = ImageFont.truetype(path, size)
-    return _font_cache[key]
+    k = (path, int(size))
+    if k not in _fonts:
+        _fonts[k] = ImageFont.truetype(path, int(size))
+    return _fonts[k]
 
 
-# ---------------------------------------------------------------- easing
 def clamp(x, a=0.0, b=1.0):
     return max(a, min(b, x))
 
 
-def ease_out(t):
+def p_(t, s, d):
+    return clamp((t - s) / d)
+
+
+def expo_out(t):
     t = clamp(t)
-    return 1 - (1 - t) ** 3
+    return 1.0 if t >= 1 else 1 - 2 ** (-10 * t)
 
 
-def ease_back(t):
+def back_out(t, k=2.2):
     t = clamp(t)
-    c1, c3 = 1.70158, 2.70158
-    return 1 + c3 * (t - 1) ** 3 + c1 * (t - 1) ** 2
+    return 1 + (k + 1) * (t - 1) ** 3 + k * (t - 1) ** 2
 
 
-def prog(t, start, dur):
-    return clamp((t - start) / dur)
+# ------------------------------------------------------------------ assets
+_emoji_cache = {}
 
 
-# ---------------------------------------------------------------- assets
-def load_cars(path):
-    src = Image.open(path).convert("RGB")
-    cars = []
-    for label, name, c, r in CARS:
-        x0, x1 = CELL_X[c]
-        y0, y1 = CELL_Y[r]
-        # trim the printed "Mix" label (top) and name (bottom); we draw our own
-        cars.append(src.crop((x0 + 4, y0 + 38, x1 - 4, y1 - 34)))
-    cells = [src.crop((CELL_X[c][0], CELL_Y[r][0], CELL_X[c][1], CELL_Y[r][1]))
-             for _, _, c, r in CARS]
-    return cars, cells
+def emoji(ch, size):
+    k = (ch, size)
+    if k not in _emoji_cache:
+        f = ImageFont.truetype(F_EMOJI, 109)
+        im = Image.new("RGBA", (160, 160), (0, 0, 0, 0))
+        ImageDraw.Draw(im).text((10, 10), ch, font=f, embedded_color=True)
+        im = im.crop(im.getbbox())
+        s = size / im.height
+        _emoji_cache[k] = im.resize((max(1, int(im.width * s)), size), Image.LANCZOS)
+    return _emoji_cache[k]
 
 
-def make_background():
-    """Deep maroon -> saffron vertical gradient with a soft centre glow."""
-    y = np.linspace(0, 1, H)[:, None]
-    top = np.array([60, 6, 22])
-    mid = np.array([140, 22, 30])
-    bot = np.array([215, 85, 10])
-    col = np.where(y < 0.55, top + (mid - top) * (y / 0.55),
-                   mid + (bot - mid) * ((y - 0.55) / 0.45))
-    img = np.repeat(col[:, None, :], W, axis=1).reshape(H, W, 3)
+def accent_of(img):
+    a = np.asarray(img.convert("RGBA")).reshape(-1, 4).astype(float)
+    a = a[a[:, 3] > 200][:, :3]
+    mx, mn = a.max(1), a.min(1)
+    sat = (mx - mn) / (mx + 1)
+    sel = a[(sat > 0.35) & (mx > 60)]
+    if len(sel) < 50:
+        return (90, 120, 255)
+    c = np.median(sel, axis=0)
+    # push to a vivid neon version
+    c = c / max(1, c.max()) * 255
+    return tuple(int(v) for v in c)
+
+
+class Car:
+    def __init__(self, path, width=1000):
+        im = Image.open(path).convert("RGBA")
+        s = width / im.width
+        self.img = im.resize((width, int(im.height * s)), Image.LANCZOS)
+        self.accent = accent_of(self.img)
+        a = self.img.getchannel("A")
+        glow = Image.new("RGBA", self.img.size, self.accent + (0,))
+        glow.putalpha(a.point(lambda v: int(v * 0.9)))
+        pad = 120
+        g = Image.new("RGBA", (self.img.width + pad * 2, self.img.height + pad * 2), (0, 0, 0, 0))
+        g.paste(glow, (pad, pad), glow)
+        self.glow = g.filter(ImageFilter.GaussianBlur(45))
+        self.glow_pad = pad
+        self.ghosts = []
+        for k in (0.35, 0.2, 0.1):
+            gi = self.img.copy()
+            gi.putalpha(a.point(lambda v, k=k: int(v * k)))
+            self.ghosts.append(gi)
+        # floor reflection
+        ref = self.img.transpose(Image.FLIP_TOP_BOTTOM)
+        grad = Image.linear_gradient("L").resize(ref.size)
+        grad = grad.point(lambda v: int(max(0, 90 - v * 0.9)))
+        ra = Image.composite(ref.getchannel("A"), Image.new("L", ref.size, 0), grad)
+        ra = Image.fromarray((np.asarray(ra).astype(float) * np.asarray(grad) / 255).astype(np.uint8))
+        ref.putalpha(ra)
+        self.reflection = ref
+
+
+def make_vignette():
     yy, xx = np.mgrid[0:H, 0:W]
-    d = np.sqrt(((xx - W / 2) / W) ** 2 + ((yy - H * 0.45) / H) ** 2)
-    glow = np.clip(1 - d * 2.2, 0, 1)[..., None] * np.array([90, 50, 10])
-    img = np.clip(img + glow, 0, 255).astype(np.uint8)
-    bg = Image.fromarray(img, "RGB")
-
-    # faint rangoli-style mandala in the middle
-    m = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    md = ImageDraw.Draw(m)
-    cx, cy = W // 2, int(H * 0.47)
-    for ring, (rad, petals) in enumerate([(430, 24), (340, 16), (250, 12)]):
-        for k in range(petals):
-            a = 2 * math.pi * k / petals
-            px, py = cx + rad * math.cos(a), cy + rad * math.sin(a)
-            s = 46 - ring * 8
-            md.ellipse((px - s, py - s, px + s, py + s), outline=(255, 210, 120, 28), width=4)
-        md.ellipse((cx - rad, cy - rad, cx + rad, cy + rad), outline=(255, 210, 120, 22), width=3)
-    bg.paste(m, (0, 0), m)
-    return bg
+    d = np.sqrt(((xx - W / 2) / (W * 0.75)) ** 2 + ((yy - H / 2) / (H * 0.7)) ** 2)
+    return np.clip(1.15 - d ** 2 * 0.9, 0.35, 1.0)[..., None].astype(np.float32)
 
 
-def draw_garland(d, t):
-    """Marigold toran across the top with hanging strands."""
-    for i in range(-1, 24):
-        x = i * 48 + 24
-        sag = 70 + 30 * math.sin(i / 23 * math.pi)
-        y = sag * 0.35
-        c = SAFFRON if i % 2 else GOLD
-        d.ellipse((x - 26, y - 26 + 10, x + 26, y + 26 + 10), fill=c)
-    for i in range(1, 11):
-        x = i * W / 11
-        sway = 6 * math.sin(t * 2 + i)
-        n = 4 + (i % 3)
-        for k in range(n):
-            y = 60 + k * 40
-            c = GOLD if (k + i) % 2 else SAFFRON
-            d.ellipse((x + sway * k / n - 17, y - 17, x + sway * k / n + 17, y + 17), fill=c)
-        d.polygon([(x + sway - 10, 60 + n * 40), (x + sway + 10, 60 + n * 40),
-                   (x + sway, 60 + n * 40 + 24)], fill=(40, 150, 60))
+def make_grain(n=6, seed=3):
+    rng = np.random.default_rng(seed)
+    out = []
+    for _ in range(n):
+        g = rng.normal(0, 9, (H // 2, W // 2)).astype(np.float32)
+        g = np.repeat(np.repeat(g, 2, 0), 2, 1)[..., None]
+        out.append(g)
+    return out
 
 
-def draw_diyas(base, t):
-    """Row of glowing clay lamps along the bottom."""
-    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    gd = ImageDraw.Draw(glow)
-    xs = [140, 400, 680, 940]
-    y = H - 120
-    for i, x in enumerate(xs):
-        flick = 1 + 0.12 * math.sin(t * 13 + i * 2.1) + 0.06 * math.sin(t * 29 + i)
-        r = 90 * flick
-        gd.ellipse((x - r, y - 60 - r, x + r, y - 60 + r), fill=(255, 170, 40, 90))
-    glow = glow.filter(ImageFilter.GaussianBlur(30))
-    base.paste(glow, (0, 0), glow)
-    d = ImageDraw.Draw(base)
-    for i, x in enumerate(xs):
-        flick = 1 + 0.15 * math.sin(t * 13 + i * 2.1)
-        d.chord((x - 75, y - 50, x + 75, y + 60), 0, 180, fill=(170, 70, 25))
-        d.ellipse((x - 75, y - 8, x + 75, y + 12), fill=(120, 45, 15))
-        fh = 52 * flick
-        d.polygon([(x - 14, y - 4), (x + 14, y - 4), (x + 3 * math.sin(t * 9 + i), y - 4 - fh)],
-                  fill=(255, 190, 40))
-        d.polygon([(x - 7, y - 4), (x + 7, y - 4), (x + 2 * math.sin(t * 9 + i), y - 4 - fh * 0.55)],
-                  fill=(255, 250, 200))
+def make_grid():
+    g = Image.new("RGBA", (W, H + 120), (0, 0, 0, 0))
+    d = ImageDraw.Draw(g)
+    for x in range(0, W + 1, 120):
+        d.line((x, 0, x, H + 120), fill=(255, 255, 255, 14), width=2)
+    for y in range(0, H + 121, 120):
+        d.line((0, y, W, y), fill=(255, 255, 255, 14), width=2)
+    return g
 
 
-class Sparkles:
-    def __init__(self, n=70, seed=7):
-        rnd = random.Random(seed)
-        self.p = [(rnd.uniform(0, W), rnd.uniform(0, H), rnd.uniform(20, 70),
-                   rnd.uniform(2, 6), rnd.uniform(0, 6.28)) for _ in range(n)]
-
-    def draw(self, d, t):
-        for x, y, speed, size, ph in self.p:
-            yy = (y - speed * t) % H
-            tw = 0.5 + 0.5 * math.sin(t * 4 + ph)
-            s = size * (0.6 + 0.6 * tw)
-            a = int(120 + 135 * tw)
-            d.ellipse((x - s, yy - s, x + s, yy + s), fill=(255, 225, 140, a))
+# ------------------------------------------------------------------ text helpers
+def text_w(txt, f):
+    return f.getlength(txt)
 
 
-# ---------------------------------------------------------------- text helpers
-def text_center(d, cx, y, txt, f, fill, stroke=0, stroke_fill=(0, 0, 0)):
-    w = d.textlength(txt, font=f)
-    d.text((cx - w / 2, y), txt, font=f, fill=fill, stroke_width=stroke, stroke_fill=stroke_fill)
+def draw_text_c(img, cx, cy, txt, f, fill, stroke=0, sfill=(0, 0, 0), anchor="mm"):
+    ImageDraw.Draw(img).text((cx, cy), txt, font=f, fill=fill, stroke_width=stroke,
+                             stroke_fill=sfill, anchor=anchor)
 
 
-def fit_font(d, txt, path, size, max_w):
-    while size > 20 and d.textlength(txt, font=font(path, size)) > max_w:
+def slam_text(base, cx, cy, txt, path, size, fill, p, stroke=0, sfill=(0, 0, 0), start=1.6):
+    """Text that slams in from big to normal size."""
+    if p <= 0:
+        return
+    e = expo_out(p)
+    scale = start + (1 - start) * e
+    f = font(path, max(10, size * scale))
+    lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    draw_text_c(lay, cx, cy, txt, f, fill, stroke, sfill)
+    if p < 0.25:
+        lay.putalpha(lay.getchannel("A").point(lambda v: int(v * p / 0.25)))
+    base.alpha_composite(lay)
+
+
+def fit(txt, path, size, maxw):
+    while size > 20 and text_w(txt, font(path, size)) > maxw:
         size -= 2
     return font(path, size)
 
 
-def pop_text(base, cx, cy, txt, path, size, fill, p, stroke=0, stroke_fill=(0, 0, 0), alpha=1.0):
-    """Draw text centred at (cx, cy) scaled by an overshoot pop factor p (0..1)."""
-    if p <= 0 or alpha <= 0:
+def caption_box(base, cx, cy, txt, f, fg, bg, p, emo=None, rot=0):
+    """TikTok-style caption: text on a solid rounded box, pops in, optional emoji."""
+    if p <= 0:
         return
-    scale = ease_back(p)
-    f = font(path, max(8, int(size * scale)))
-    tmp = Image.new("RGBA", (W, int(size * 2.2)), (0, 0, 0, 0))
-    td = ImageDraw.Draw(tmp)
-    text_center(td, W / 2, size * 0.3, txt, f, fill, stroke, stroke_fill)
-    if alpha < 1:
-        tmp.putalpha(tmp.getchannel("A").point(lambda v: int(v * alpha)))
-    base.paste(tmp, (int(cx - W / 2), int(cy - size * 0.3 - f.size * 0.55)), tmp)
+    tw = text_w(txt, f)
+    es = int(f.size * 1.15) if emo else 0
+    gap = 16 if emo else 0
+    bw, bh = int(tw + es + gap + 64), int(f.size * 1.6)
+    lay = Image.new("RGBA", (bw + 40, bh + 40), (0, 0, 0, 0))
+    d = ImageDraw.Draw(lay)
+    d.rounded_rectangle((20, 20, 20 + bw, 20 + bh), radius=22, fill=bg)
+    d.text((20 + 32, 20 + bh / 2), txt, font=f, fill=fg, anchor="lm")
+    if emo:
+        e = emoji(emo, es)
+        lay.alpha_composite(e, (int(20 + 32 + tw + gap), int(20 + (bh - e.height) / 2)))
+    s = back_out(p)
+    lay = lay.rotate(rot, resample=Image.BICUBIC, expand=True)
+    lay = lay.resize((max(1, int(lay.width * s)), max(1, int(lay.height * s))), Image.BICUBIC)
+    base.alpha_composite(lay, (int(cx - lay.width / 2), int(cy - lay.height / 2)))
 
 
-def pill(d, cx, y, txt, f, bg, fg, pad=(34, 16)):
-    w = d.textlength(txt, font=f)
-    box = (cx - w / 2 - pad[0], y, cx + w / 2 + pad[0], y + f.size + pad[1] * 2)
-    d.rounded_rectangle(box, radius=(box[3] - box[1]) // 2, fill=bg)
-    d.text((cx - w / 2, y + pad[1] - f.size * 0.08), txt, font=f, fill=fg)
+def marquee(base, y, txt, f, color, offset, outline=True, alpha=90):
+    """Giant repeated text scrolling horizontally behind the car."""
+    unit = txt + "  •  "
+    uw = text_w(unit, f)
+    lay = Image.new("RGBA", (W, int(f.size * 1.4)), (0, 0, 0, 0))
+    d = ImageDraw.Draw(lay)
+    x = -(offset % uw) - uw
+    while x < W:
+        if outline:
+            d.text((x, 0), unit, font=f, fill=(0, 0, 0, 0), stroke_width=3,
+                   stroke_fill=color + (alpha,))
+        else:
+            d.text((x, 0), unit, font=f, fill=color + (alpha,))
+        x += uw
+    base.alpha_composite(lay, (0, int(y)))
 
 
-def card(car_img, width, label_color=GOLD):
-    """White rounded card holding the car photo, with a gold border."""
-    ratio = car_img.height / car_img.width
-    inner_w = width - 40
-    inner_h = int(inner_w * ratio)
-    c = Image.new("RGBA", (width, inner_h + 40), (0, 0, 0, 0))
-    cd = ImageDraw.Draw(c)
-    cd.rounded_rectangle((0, 0, width - 1, inner_h + 39), radius=36, fill=label_color)
-    cd.rounded_rectangle((8, 8, width - 9, inner_h + 31), radius=30, fill=(250, 250, 252))
-    photo = car_img.resize((inner_w, inner_h), Image.LANCZOS)
-    mask = Image.new("L", photo.size, 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, inner_w - 1, inner_h - 1), radius=24, fill=255)
-    c.paste(photo, (20, 20), mask)
-    return c
+# ------------------------------------------------------------------ scenes
+def bg_frame(t, accent, grid, glow_strength=1.0):
+    base = Image.new("RGBA", (W, H), (8, 8, 12, 255))
+    off = int((t * 60) % 120)
+    base.alpha_composite(grid, (0, -off))
+    # two drifting neon blobs in the accent colour
+    blobs = Image.new("RGBA", (W // 4, H // 4), (0, 0, 0, 0))
+    d = ImageDraw.Draw(blobs)
+    for i, (r, sp, ph) in enumerate([(110, 0.6, 0.0), (80, 0.9, 2.0)]):
+        cx = W / 8 + math.sin(t * sp + ph) * 70
+        cy = H / 8 + (-60 if i == 0 else 90) + math.cos(t * sp * 0.8 + ph) * 50
+        c = accent if i == 0 else tuple(int(v * 0.6) for v in accent[::-1])
+        d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=c + (int(110 * glow_strength),))
+    blobs = blobs.filter(ImageFilter.GaussianBlur(40)).resize((W, H), Image.BILINEAR)
+    base.alpha_composite(blobs)
+    return base
 
 
-def shine(card_img, p):
-    """Diagonal light sweep across a card, p in 0..1."""
-    if p <= 0 or p >= 1:
-        return card_img
-    w, h = card_img.size
-    band = Image.new("L", (w, h), 0)
-    bd = ImageDraw.Draw(band)
-    x = -w * 0.4 + p * w * 1.8
-    bd.polygon([(x, 0), (x + 90, 0), (x - 160, h), (x - 250, h)], fill=150)
-    band = band.filter(ImageFilter.GaussianBlur(18))
-    band = Image.composite(band, Image.new("L", (w, h), 0), card_img.getchannel("A"))
-    out = card_img.copy()
-    out.paste(Image.new("RGBA", (w, h), (255, 255, 255, 255)), (0, 0), band)
+def speed_lines(base, t, accent, strength):
+    if strength <= 0:
+        return
+    rnd = random.Random(int(t * 30))
+    d = ImageDraw.Draw(base)
+    for _ in range(int(26 * strength)):
+        y = rnd.uniform(500, 1500)
+        x = rnd.uniform(-200, W)
+        ln = rnd.uniform(150, 600)
+        c = accent if rnd.random() < 0.5 else (255, 255, 255)
+        d.line((x, y, x + ln, y), fill=c + (int(rnd.uniform(40, 140) * strength),),
+               width=rnd.choice([2, 3, 4]))
+
+
+def scene_hook(base, t, cars):
+    beat = t / BEAT
+    # flashing car silhouettes behind the title (quick teaser cuts every half beat)
+    k = int(beat * 2) % len(cars)
+    if beat < 6:
+        car = cars[k]
+        sil = car.img.copy()
+        sil = sil.resize((int(sil.width * 1.1), int(sil.height * 1.1)))
+        a = sil.getchannel("A").point(lambda v: int(v * 0.28))
+        sil.putalpha(a)
+        base.alpha_composite(sil, (int(W / 2 - sil.width / 2), 1400 - sil.height // 2))
+
+    slam_text(base, W / 2, 560, "2027", F_BLACK_I, 330, (255, 255, 255), p_(t, 0, 0.3),
+              start=2.2)
+    slam_text(base, W / 2, 790, "SUPER TREASURE", F_BLACK_I, 104, (255, 214, 0),
+              p_(t, BEAT * 2, 0.25))
+    slam_text(base, W / 2, 900, "HUNTS", F_BLACK_I, 150, (255, 214, 0), p_(t, BEAT * 3, 0.25))
+    caption_box(base, W / 2, 1090, "JUST GOT REVEALED", font(F_BLACK, 62), (0, 0, 0),
+                (255, 255, 255), p_(t, BEAT * 4, 0.3), emo="👀", rot=-3)
+    if t > BEAT * 6:
+        f = font(F_XB, 52)
+        bounce = 12 * abs(math.sin((t - BEAT * 6) * math.pi / BEAT))
+        draw_text_c(base, W / 2, 1640 + bounce, "every one so far ↓", f, (255, 255, 255))
+
+
+def scene_car(base, t, i, car, side):
+    label, name, vibe, emo = CARS[i]
+    acc = car.accent
+    mystery = label == "MIX J"
+
+    # giant scrolling outline marquee
+    marquee(base, 1010, label, font(F_BLACK_I, 230), acc, t * 260 + i * 300, outline=True, alpha=110)
+    marquee(base, 380, name, font(F_BLACK_I, 120), (255, 255, 255), -t * 180 - i * 200,
+            outline=True, alpha=35)
+
+    # counter chip
+    f = font(F_XB, 38)
+    caption_box(base, W / 2, 250, f"STH 2027  ·  {i + 1:02d}/{len(CARS):02d}", f, (255, 255, 255),
+                (255, 255, 255, 28), 1.0)
+
+    # mix label slam
+    slam_text(base, W / 2, 560, label, F_BLACK_I, 210, acc, p_(t, 0, 0.22), stroke=0, start=1.9)
+
+    # car slide-in with motion trail, then float
+    pin = expo_out(p_(t, 0.02, 0.32))
+    pout = clamp((t - (T_CAR - 0.12)) / 0.12)
+    dx = side * (1 - pin) * W * 1.1 - side * pout * W * 1.2
+    float_y = 10 * math.sin(t * 3.2)
+    cx, cy = W / 2 + dx, 1180 + float_y
+    x0, y0 = int(cx - car.img.width / 2), int(cy - car.img.height / 2)
+
+    gp = car.glow_pad
+    glow_a = 0.6 + 0.4 * math.sin(t * 6) ** 2
+    gl = car.glow
+    if glow_a < 1:
+        gl = gl.copy()
+        gl.putalpha(gl.getchannel("A").point(lambda v: int(v * glow_a)))
+    base.alpha_composite(gl, (x0 - gp, y0 - gp))
+    base.alpha_composite(car.reflection, (x0, y0 + car.img.height - 6))
+    moving = pin < 0.97 or pout > 0
+    if moving:
+        for k, gh in enumerate(car.ghosts):
+            base.alpha_composite(gh, (int(x0 + side * (k + 1) * 70), y0))
+    base.alpha_composite(car.img, (x0, y0))
+
+    # name + vibe captions
+    nf = fit(name, F_BLACK, 74, W - 120)
+    if p_(t, BEAT, 0.01) > 0:
+        pn = p_(t, BEAT, 0.18)
+        lay = Image.new("RGBA", (W, 160), (0, 0, 0, 0))
+        draw_text_c(lay, W / 2, 80, name, nf, (255, 255, 255), stroke=6, sfill=(0, 0, 0))
+        yoff = int(30 * (1 - expo_out(pn)))
+        if pn < 1:
+            lay.putalpha(lay.getchannel("A").point(lambda v: int(v * pn)))
+        base.alpha_composite(lay, (0, 1430 - 80 + yoff))
+    caption_box(base, W / 2, 1580, vibe, font(F_BLACK, 56), (0, 0, 0), acc + (255,),
+                p_(t, BEAT * 2, 0.28), emo=emo, rot=(-3 if i % 2 else 3))
+    if label == "MIX ?":
+        draw_text_c(base, W / 2, 1690, "(mix not confirmed yet)", font(F_XB, 36),
+                    (255, 255, 255, 170))
+    if mystery and t > BEAT * 2.5:
+        draw_text_c(base, W / 2, 1690, "stay tuned...", font(F_XB, 40), (255, 255, 255, 200))
+    return pin < 0.6 or pout > 0  # speed-lines hint
+
+
+def scene_recap(base, t, cars):
+    slam_text(base, W / 2, 330, "THE LINE-UP", F_BLACK_I, 140, (255, 255, 255), p_(t, 0, 0.25),
+              start=2)
+    caption_box(base, W / 2, 470, "(so far)", font(F_BLACK, 50), (0, 0, 0), (255, 214, 0),
+                p_(t, BEAT, 0.25), rot=-2)
+    tw = 330
+    for i, car in enumerate(cars):
+        pi_ = p_(t, BEAT * 1.5 + i * BEAT * 0.5, 0.25)
+        if pi_ <= 0:
+            continue
+        r, c = divmod(i, 3)
+        cx = 190 + c * 350
+        cy = 720 + r * 330
+        s = back_out(pi_)
+        d = ImageDraw.Draw(base)
+        tile_w, tile_h = 330 * s, 300 * s
+        d.rounded_rectangle((cx - tile_w / 2, cy - tile_h / 2, cx + tile_w / 2, cy + tile_h / 2),
+                            radius=int(26 * s), fill=car.accent + (60,),
+                            outline=car.accent + (220,), width=3)
+        im = car.img.resize((max(1, int(tw * 0.9 * s)), max(1, int(car.img.height * tw * 0.9 * s / car.img.width))),
+                            Image.LANCZOS)
+        base.alpha_composite(im, (int(cx - im.width / 2), int(cy - im.height / 2 - 20 * s)))
+        lab = CARS[i][0]
+        draw_text_c(base, cx, cy + tile_h / 2 - 40 * s, lab, font(F_BLACK_I, max(10, 40 * s)),
+                    (255, 255, 255))
+
+
+def scene_outro(base, t, cars):
+    slam_text(base, W / 2, 620, "which one", F_BLACK_I, 130, (255, 255, 255), p_(t, 0, 0.25))
+    slam_text(base, W / 2, 770, "u hunting?", F_BLACK_I, 130, (255, 214, 0), p_(t, BEAT, 0.25))
+    caption_box(base, W / 2, 960, "comment ur pick", font(F_BLACK, 60), (0, 0, 0),
+                (255, 255, 255), p_(t, BEAT * 2, 0.3), emo="👇", rot=-3)
+    caption_box(base, W / 2, 1110, "follow for more drops", font(F_BLACK, 52), (255, 255, 255),
+                (255, 40, 90), p_(t, BEAT * 3.5, 0.3), emo="🔥", rot=2)
+    # cars parade along the bottom
+    small = [c.img.resize((300, int(c.img.height * 300 / c.img.width)), Image.LANCZOS) for c in cars[:8]]
+    x = W - (t * 700) % (len(small) * 340) - 340
+    for k in range(len(small) * 2):
+        im = small[k % len(small)]
+        xx = x + k * 340
+        if -340 < xx < W:
+            base.alpha_composite(im, (int(xx), 1430 - im.height // 2))
+    draw_text_c(base, W / 2, 1720, "pics: @your.choice_hotwheels", font(F_XB, 30),
+                (255, 255, 255, 140))
+
+
+# ------------------------------------------------------------------ post FX
+def rgb_split(arr, amt):
+    if amt < 1:
+        return arr
+    out = arr.copy()
+    out[:, amt:, 0] = arr[:, :-amt, 0]
+    out[:, :-amt, 2] = arr[:, amt:, 2]
     return out
 
 
-# ---------------------------------------------------------------- scenes
-def scene_intro(base, t):
-    d = ImageDraw.Draw(base)
-    pop_text(base, W / 2, 470, "HAPPY BHAI DOOJ", F_XBOLD, 74, GOLD, prog(t, 0.1, 0.45),
-             stroke=3, stroke_fill=(90, 20, 10))
-    p = prog(t, 0.4, 0.5)
-    if p > 0:
-        a = ease_out(p)
-        f = font(F_BOLD, 46)
-        txt = "Gift ideas for your bhai..."
-        tmp = Image.new("RGBA", (W, 80), (0, 0, 0, 0))
-        text_center(ImageDraw.Draw(tmp), W / 2, 10, txt, f, CREAM)
-        tmp.putalpha(tmp.getchannel("A").point(lambda v: int(v * a)))
-        base.paste(tmp, (0, int(580 + 30 * (1 - a))), tmp)
-    pop_text(base, W / 2, 820, "2027", F_BLACK, 300, WHITE, prog(t, 0.9, 0.5),
-             stroke=8, stroke_fill=(150, 20, 20))
-    pop_text(base, W / 2, 1040, "SUPER", F_BLACK, 130, GOLD, prog(t, 1.3, 0.45),
-             stroke=5, stroke_fill=(90, 20, 10))
-    pop_text(base, W / 2, 1180, "TREASURE HUNTS", F_BLACK, 104, GOLD, prog(t, 1.55, 0.45),
-             stroke=5, stroke_fill=(90, 20, 10))
-    p = prog(t, 2.1, 0.4)
-    if p > 0:
-        d = ImageDraw.Draw(base)
-        f = font(F_BLACK, 54)
-        y = 1320 + 40 * (1 - ease_back(p))
-        pill(d, W / 2, y, "REVEALED SO FAR", f, (255, 255, 255), (170, 25, 30))
+def glitch_slices(arr, t, strength):
+    if strength <= 0:
+        return arr
+    rnd = random.Random(int(t * 1000))
+    out = arr.copy()
+    for _ in range(int(8 * strength)):
+        y = rnd.randint(0, H - 60)
+        h = rnd.randint(10, 60)
+        s = rnd.randint(-80, 80)
+        out[y:y + h] = np.roll(arr[y:y + h], s, axis=1)
+    return out
 
 
-def scene_car(base, t, idx, car_img):
-    label, name, _, _ = CARS[idx]
-    mystery = label == "MIX J"
-    d = ImageDraw.Draw(base)
-
-    # counter
-    f = font(F_XBOLD, 40)
-    pill(d, W / 2, 330, f"{idx + 1} / {len(CARS)}", f, (0, 0, 0, 110), CREAM, pad=(28, 12))
-
-    # big mix label pops in
-    pop_text(base, W / 2, 560, label, F_BLACK, 190, GOLD, prog(t, 0.0, 0.35),
-             stroke=7, stroke_fill=(110, 15, 15))
-
-    # card slides in from the right, sways gently, shine sweeps across
-    cw = 980
-    c = card(car_img, cw, GOLD if not mystery else (120, 160, 255))
-    c = shine(c, prog(t, 0.55, 0.6))
-    p = ease_out(prog(t, 0.15, 0.45))
-    out = ease_out(prog(t, PER_CAR - 0.25, 0.25))
-    x = (W - cw) / 2 + (1 - p) * W - out * W
-    y = 800 - c.height / 2 + 140 + 8 * math.sin(t * 3)
-    # drop shadow
-    sh = Image.new("RGBA", (c.width + 80, c.height + 80), (0, 0, 0, 0))
-    ImageDraw.Draw(sh).rounded_rectangle((40, 50, c.width + 40, c.height + 50), radius=40,
-                                         fill=(0, 0, 0, 120))
-    sh = sh.filter(ImageFilter.GaussianBlur(22))
-    base.paste(sh, (int(x - 40), int(y - 40)), sh)
-    base.paste(c, (int(x), int(y)), c)
-
-    # car name slides up
-    p = ease_out(prog(t, 0.6, 0.4))
-    if p > 0:
-        d = ImageDraw.Draw(base)
-        txt = name if not mystery else "Coming soon..."
-        f = fit_font(d, txt, F_BLACK, 78, W - 100)
-        tmp = Image.new("RGBA", (W, 130), (0, 0, 0, 0))
-        text_center(ImageDraw.Draw(tmp), W / 2, 15, txt, f, WHITE, 4, (90, 15, 10))
-        tmp.putalpha(tmp.getchannel("A").point(lambda v: int(v * p)))
-        base.paste(tmp, (0, int(y + c.height + 60 + 40 * (1 - p))), tmp)
-        if mystery:
-            f2 = font(F_BOLD, 44)
-            tmp = Image.new("RGBA", (W, 80), (0, 0, 0, 0))
-            text_center(ImageDraw.Draw(tmp), W / 2, 10, "Still under wraps", f2, CREAM)
-            tmp.putalpha(tmp.getchannel("A").point(lambda v: int(v * p)))
-            base.paste(tmp, (0, int(y + c.height + 170)), tmp)
-        elif label == "MIX ?":
-            f2 = font(F_BOLD, 40)
-            tmp = Image.new("RGBA", (W, 80), (0, 0, 0, 0))
-            text_center(ImageDraw.Draw(tmp), W / 2, 10, "Mix not confirmed yet", f2, CREAM)
-            tmp.putalpha(tmp.getchannel("A").point(lambda v: int(v * p)))
-            base.paste(tmp, (0, int(y + c.height + 170)), tmp)
+def zoom(img, s, shake=(0, 0)):
+    if s <= 1.0005 and shake == (0, 0):
+        return img
+    w2, h2 = int(W * s), int(H * s)
+    big = img.resize((w2, h2), Image.BILINEAR)
+    x0 = (w2 - W) // 2 + int(shake[0])
+    y0 = (h2 - H) // 2 + int(shake[1])
+    x0 = max(0, min(w2 - W, x0))
+    y0 = max(0, min(h2 - H, y0))
+    return big.crop((x0, y0, x0 + W, y0 + H))
 
 
-def scene_recap(base, t, cells):
-    pop_text(base, W / 2, 360, "THE LINE-UP", F_BLACK, 120, GOLD, prog(t, 0.0, 0.4),
-             stroke=5, stroke_fill=(90, 20, 10))
-    pop_text(base, W / 2, 480, "(so far)", F_XBOLD, 60, CREAM, prog(t, 0.2, 0.4))
-    tw, gap = 330, 18
-    th = int(tw * cells[0].height / cells[0].width)
-    x0 = (W - (tw * 3 + gap * 2)) / 2
-    y0 = 620
-    for i, cell in enumerate(cells):
-        p = prog(t, 0.35 + i * 0.12, 0.35)
-        if p <= 0:
-            continue
-        s = ease_back(p)
-        w_, h_ = max(1, int(tw * s)), max(1, int(th * s))
-        tile = cell.resize((w_, h_), Image.LANCZOS)
-        r, c = divmod(i, 3)
-        cx = x0 + c * (tw + gap) + tw / 2
-        cy = y0 + r * (th + gap) + th / 2
-        d = ImageDraw.Draw(base)
-        d.rounded_rectangle((cx - w_ / 2 - 6, cy - h_ / 2 - 6, cx + w_ / 2 + 6, cy + h_ / 2 + 6),
-                            radius=14, fill=GOLD)
-        base.paste(tile, (int(cx - w_ / 2), int(cy - h_ / 2)))
-
-
-def scene_outro(base, t):
-    pop_text(base, W / 2, 620, "Which one is", F_BLACK, 104, WHITE, prog(t, 0.0, 0.4),
-             stroke=4, stroke_fill=(90, 15, 10))
-    pop_text(base, W / 2, 750, "your bhai getting?", F_BLACK, 92, WHITE, prog(t, 0.15, 0.4),
-             stroke=4, stroke_fill=(90, 15, 10))
-    p = prog(t, 0.6, 0.4)
-    if p > 0:
-        d = ImageDraw.Draw(base)
-        pill(d, W / 2, 900 + 40 * (1 - ease_back(p)), "COMMENT YOUR FAVOURITE",
-             font(F_BLACK, 50), GOLD, (110, 15, 15))
-    pop_text(base, W / 2, 1160, "Happy Bhai Dooj", F_BLACK, 116, GOLD, prog(t, 1.0, 0.5),
-             stroke=5, stroke_fill=(90, 20, 10))
-    p = prog(t, 1.5, 0.5)
-    if p > 0:
-        f = font(F_BOLD, 34)
-        tmp = Image.new("RGBA", (W, 70), (0, 0, 0, 0))
-        text_center(ImageDraw.Draw(tmp), W / 2, 10, "Line-up image: @your.choice_hotwheels", f, CREAM)
-        tmp.putalpha(tmp.getchannel("A").point(lambda v: int(v * p * 0.85)))
-        base.paste(tmp, (0, 1420), tmp)
-
-
-# ---------------------------------------------------------------- audio
-def write_audio(path, total):
+# ------------------------------------------------------------------ audio
+def synth_audio(path):
     sr = 44100
-    n = int(total * sr)
-    audio = np.zeros(n)
-    rng = np.random.default_rng(1)
+    n = int(TOTAL * sr) + sr
+    mix = np.zeros(n)
+    rng = np.random.default_rng(5)
 
-    def add(sig, at):
+    def add(sig, at, g=1.0):
         i = int(at * sr)
+        if i >= n:
+            return
         j = min(n, i + len(sig))
-        audio[i:j] += sig[: j - i]
+        mix[i:j] += sig[: j - i] * g
 
-    def whoosh(dur=0.45):
-        m = int(dur * sr)
-        noise = rng.standard_normal(m)
-        env = np.sin(np.linspace(0, np.pi, m)) ** 2
-        # crude band-pass sweep: moving-average smoothing of varying width
-        out = np.convolve(noise, np.ones(12) / 12, mode="same") - np.convolve(noise, np.ones(60) / 60, mode="same")
-        return out * env * 0.35
+    def env_exp(m, k):
+        return np.exp(-np.arange(m) / sr * k)
 
-    def chime(freq=1318.5, dur=0.9):
+    def kick():
+        m = int(0.35 * sr)
+        tt = np.arange(m) / sr
+        f = 50 + 120 * np.exp(-tt * 35)
+        ph = 2 * np.pi * np.cumsum(f) / sr
+        return np.sin(ph) * env_exp(m, 9) * 1.0
+
+    def clap():
+        m = int(0.25 * sr)
+        nz = rng.standard_normal(m)
+        nz = nz - np.convolve(nz, np.ones(8) / 8, "same")
+        e = env_exp(m, 22)
+        for d in (0.0, 0.012, 0.024):
+            k = int(d * sr)
+            e[k:] += env_exp(m - k, 60) * 0.6
+        return nz * e * 0.45
+
+    def hat(open_=False):
+        m = int((0.18 if open_ else 0.05) * sr)
+        nz = rng.standard_normal(m)
+        nz = nz - np.convolve(nz, np.ones(3) / 3, "same")
+        return nz * env_exp(m, 18 if open_ else 80) * 0.18
+
+    def bass(freq, dur, glide_to=None):
         m = int(dur * sr)
         tt = np.arange(m) / sr
-        env = np.exp(-tt * 5)
-        return (np.sin(2 * np.pi * freq * tt) + 0.5 * np.sin(2 * np.pi * freq * 2.01 * tt)
-                + 0.25 * np.sin(2 * np.pi * freq * 3.03 * tt)) * env * 0.18
+        f = np.full(m, freq) if glide_to is None else freq + (glide_to - freq) * np.clip(tt / 0.08, 0, 1)
+        ph = 2 * np.pi * np.cumsum(f) / sr
+        s = np.sin(ph) + 0.25 * np.sin(2 * ph)
+        s = np.tanh(s * 1.8)
+        e = np.minimum(1, tt / 0.005) * np.exp(-tt * 1.2)
+        return s * e * 0.55
 
-    def bell(freq=880, dur=1.6):
+    def impact():
+        m = int(1.2 * sr)
+        tt = np.arange(m) / sr
+        f = 40 + 80 * np.exp(-tt * 6)
+        boom = np.sin(2 * np.pi * np.cumsum(f) / sr) * np.exp(-tt * 3)
+        nz = rng.standard_normal(m) * np.exp(-tt * 14) * 0.4
+        return (boom + nz) * 0.8
+
+    def riser(dur):
         m = int(dur * sr)
         tt = np.arange(m) / sr
-        env = np.exp(-tt * 2.5)
-        return (np.sin(2 * np.pi * freq * tt) + 0.6 * np.sin(2 * np.pi * freq * 2.76 * tt)) * env * 0.22
+        nz = rng.standard_normal(m)
+        nz = nz - np.convolve(nz, np.ones(4) / 4, "same")
+        sweep = np.sin(2 * np.pi * np.cumsum(300 + 2500 * (tt / dur) ** 2) / sr) * 0.3
+        return (nz * 0.25 + sweep) * (tt / dur) ** 2 * 0.5
 
-    add(bell(660), 0.1)
-    add(bell(990), 0.9)
-    notes = [1046.5, 1174.7, 1318.5, 1396.9, 1568.0, 1760.0, 1975.5, 2093.0, 2349.3]
+    def stab(freqs, dur=0.3):
+        m = int(dur * sr)
+        tt = np.arange(m) / sr
+        s = sum(np.sign(np.sin(2 * np.pi * f * tt)) * 0.3 + np.sin(2 * np.pi * f * tt) for f in freqs)
+        return s * np.exp(-tt * 9) * 0.08
+
+    # minor-key 808 line (A minor-ish), one note per bar
+    roots = [55.0, 55.0, 43.65, 49.0]  # A1 A1 F1 G1
+    nbeats = int(TOTAL / BEAT) + 1
+    drop = HOOK_BEATS  # full beat starts after the hook
+    for b in range(nbeats):
+        at = b * BEAT
+        bar, pos = divmod(b, 4)
+        root = roots[bar % 4]
+        if b < drop:
+            # sparse hook: kicks on slams, hats building
+            if b in (0, 2, 3, 4):
+                add(kick(), at)
+            add(hat(), at + BEAT / 2)
+            if b >= 4:
+                add(hat(), at)
+                add(hat(), at + BEAT / 4)
+                add(hat(), at + 3 * BEAT / 4)
+            continue
+        if b >= nbeats - 2:
+            continue
+        # drums
+        if pos == 0:
+            add(kick(), at)
+        if pos == 2:
+            add(kick(), at + BEAT / 2)
+        if pos in (1, 3):
+            add(clap(), at)
+        for s in range(2):
+            add(hat(), at + s * BEAT / 2)
+        if pos == 3 and bar % 2:
+            for s in range(4):  # hat roll
+                add(hat(), at + BEAT / 2 + s * BEAT / 8, 0.8)
+        if pos == 2 and bar % 2 == 0:
+            add(hat(True), at + BEAT / 2)
+        # 808
+        if pos == 0:
+            add(bass(root, BEAT * 1.9), at)
+        if pos == 2:
+            add(bass(root * 1.5, BEAT * 0.9, glide_to=root), at + BEAT / 2)
+        # chord stab
+        if pos == 0:
+            add(stab([root * 8, root * 8 * 1.189, root * 8 * 1.498]), at)
+
+    add(riser(T_HOOK - 0.1), 0.05)
     for i in range(len(CARS)):
-        st = INTRO + i * PER_CAR
-        add(whoosh(), st + 0.1)
-        add(chime(notes[i]), st + 0.6)
-    st = INTRO + len(CARS) * PER_CAR
-    for i in range(9):
-        add(chime(notes[i], 0.4) * 0.6, st + 0.35 + i * 0.12)
-    add(bell(660), st + RECAP + 1.0)
-    add(bell(880), st + RECAP + 1.05)
+        add(impact(), T_HOOK + i * T_CAR, 0.7 if i else 1.0)
+    add(impact(), T_HOOK + T_CARS, 0.8)
+    add(impact(), T_HOOK + T_CARS + T_RECAP, 0.8)
 
-    audio = audio / max(1e-9, np.abs(audio).max()) * 0.8
-    pcm = (audio * 32767).astype(np.int16)
+    mix = mix[: int(TOTAL * sr)]
+    mix = np.tanh(mix * 1.1)
+    mix = mix / np.abs(mix).max() * 0.9
+    fade = int(0.6 * sr)
+    mix[-fade:] *= np.linspace(1, 0, fade)
+    pcm = (mix * 32767).astype(np.int16)
     with wave.open(path, "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
@@ -426,48 +559,75 @@ def write_audio(path, total):
         wf.writeframes(pcm.tobytes())
 
 
-# ---------------------------------------------------------------- main
-def main(src, out):
-    cars, cells = load_cars(src)
-    bg = make_background()
-    sparkles = Sparkles()
-    total = INTRO + PER_CAR * len(CARS) + RECAP + OUTRO
-    nframes = int(total * FPS)
+# ------------------------------------------------------------------ main
+def render_frame(t, cars, grid, vignette, grain, fi):
+    hook_acc = (255, 40, 90)
+    in_cars = T_HOOK <= t < T_HOOK + T_CARS
+    if t < T_HOOK:
+        acc, lt = hook_acc, t
+    elif in_cars:
+        k = int((t - T_HOOK) // T_CAR)
+        acc, lt = cars[k].accent, t - T_HOOK - k * T_CAR
+    elif t < T_HOOK + T_CARS + T_RECAP:
+        acc, lt = (255, 214, 0), t - T_HOOK - T_CARS
+    else:
+        acc, lt = hook_acc, t - T_HOOK - T_CARS - T_RECAP
 
-    wav = out.rsplit(".", 1)[0] + "_sfx.wav"
-    write_audio(wav, total)
+    frame = bg_frame(t, acc, grid)
+    sl = 0.0
+    if t < T_HOOK:
+        scene_hook(frame, lt, cars)
+    elif in_cars:
+        side = 1 if k % 2 == 0 else -1
+        fast = scene_car(frame, lt, k, cars[k], side)
+        sl = 1.0 if fast else 0.25
+    elif t < T_HOOK + T_CARS + T_RECAP:
+        scene_recap(frame, lt, cars)
+    else:
+        scene_outro(frame, lt, cars)
+    speed_lines(frame, t, acc, sl)
 
+    # beat-synced camera: zoom punch on every beat, shake on section hits
+    bp = (t % BEAT) / BEAT
+    punch = 1 + 0.045 * math.exp(-bp * 7)
+    hit_times = [0, BEAT * 2, BEAT * 3, BEAT * 4] + [T_HOOK + i * T_CAR for i in range(len(CARS))] \
+        + [T_HOOK + T_CARS, T_HOOK + T_CARS + T_RECAP]
+    since = min((t - h for h in hit_times if t >= h), default=9)
+    shake_amt = 26 * math.exp(-since * 14) if since < 0.4 else 0
+    rnd = random.Random(fi)
+    shake = (rnd.uniform(-1, 1) * shake_amt, rnd.uniform(-1, 1) * shake_amt)
+    frame = zoom(frame.convert("RGB"), punch + (0.06 * math.exp(-since * 10) if since < 0.4 else 0), shake)
+
+    arr = np.asarray(frame).astype(np.float32)
+    # flash on hits
+    if since < 0.12:
+        a = (1 - since / 0.12) * 0.75
+        arr = arr * (1 - a) + 255 * a
+    arr = arr * vignette + grain[fi % len(grain)]
+    arr = np.clip(arr, 0, 255).astype(np.uint8)
+    if since < 0.15:
+        arr = rgb_split(arr, int(18 * (1 - since / 0.15)))
+        arr = glitch_slices(arr, t, 1 - since / 0.15)
+    return arr
+
+
+def main(cars_dir, out):
+    cars = [Car(f"{cars_dir}/car{i}.png") for i in range(len(CARS))]
+    grid, vignette, grain = make_grid(), make_vignette(), make_grain()
+    wav = out.rsplit(".", 1)[0] + "_beat.wav"
+    synth_audio(wav)
+    nframes = int(TOTAL * FPS)
     ff = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error",
-         "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-",
-         "-i", wav,
-         "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-         "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", out],
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+         "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-", "-i", wav,
+         "-c:v", "libx264", "-preset", "medium", "-crf", "17", "-pix_fmt", "yuv420p",
+         "-c:a", "aac", "-b:a", "256k", "-shortest", "-movflags", "+faststart", out],
         stdin=subprocess.PIPE)
-
     for fi in range(nframes):
-        t = fi / FPS
-        frame = bg.copy().convert("RGBA")
-        over = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        sparkles.draw(ImageDraw.Draw(over), t)
-        frame.alpha_composite(over)
-        draw_diyas(frame, t)
-        draw_garland(ImageDraw.Draw(frame), t)
-
-        if t < INTRO:
-            scene_intro(frame, t)
-        elif t < INTRO + PER_CAR * len(CARS):
-            k = int((t - INTRO) // PER_CAR)
-            scene_car(frame, t - INTRO - k * PER_CAR, k, cars[k])
-        elif t < INTRO + PER_CAR * len(CARS) + RECAP:
-            scene_recap(frame, t - INTRO - PER_CAR * len(CARS), cells)
-        else:
-            scene_outro(frame, t - INTRO - PER_CAR * len(CARS) - RECAP)
-
-        ff.stdin.write(frame.convert("RGB").tobytes())
+        ff.stdin.write(render_frame(fi / FPS, cars, grid, vignette, grain, fi).tobytes())
     ff.stdin.close()
     ff.wait()
-    print(f"wrote {out} ({total:.1f}s, {nframes} frames)")
+    print(f"wrote {out}: {TOTAL:.1f}s, {nframes} frames")
 
 
 if __name__ == "__main__":
