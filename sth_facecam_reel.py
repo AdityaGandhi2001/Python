@@ -3,6 +3,8 @@ Face-cam STH reel: your talking clip as the hook, then the beat-synced car revea
 
     python sth_facecam_reel.py sth_assets facecam.mov out.mp4 [--toon]
 
+--avatar replaces the footage with the Memoji-style cartoon from sth_avatar.py,
+         lip-synced to the clip's voice (the video itself is not shown).
 --toon turns the face-cam footage into a painted cartoon (OpenCV stylization
 plus ink outlines, smoothed over time so the lines don't flicker).
 
@@ -70,6 +72,33 @@ class Toon:
         out = paint.astype(np.float32) * (1 - line * 0.92)
         out = cv2.resize(np.clip(out, 0, 255).astype(np.uint8), (W, H), interpolation=cv2.INTER_CUBIC)
         return cv2.cvtColor(out, cv2.COLOR_BGR2RGB)
+
+
+def mouth_track(cam, n_frames):
+    """Mouth openness per video frame (0..1) from the voice loudness."""
+    raw = subprocess.check_output(["ffmpeg", "-loglevel", "error", "-i", cam, "-map", "0:a:0", "-ac", "1",
+                                   "-ar", "16000", "-f", "s16le", "-"])
+    x = np.frombuffer(raw, np.int16).astype(np.float32) / 32768
+    hop = 16000 // FPS
+    rms = np.array([np.sqrt((x[i * hop:(i + 1) * hop] ** 2).mean() + 1e-12) for i in range(n_frames)])
+    lo, hi = np.percentile(rms, 20), np.percentile(rms, 95)
+    m = np.clip((rms - lo * 1.3) / max(1e-6, hi - lo * 1.3), 0, 1)
+    out, v = [], 0.0
+    for a in m:  # fast attack, slower release, like real lips
+        v = a if a > v else v * 0.6 + a * 0.4
+        out.append(v)
+    return np.array(out)
+
+
+def avatar_frames(cam, n_frames, grid):
+    from sth_avatar import AH, Avatar
+    av = Avatar()
+    mouth = mouth_track(cam, n_frames)
+    for k in range(n_frames):
+        t = k / FPS
+        base = R.bg_frame(t, (255, 40, 90), grid)
+        base.alpha_composite(av.frame(t, float(mouth[k])), (0, H - AH - 40))
+        yield np.asarray(base.convert("RGB"))
 
 
 def make_overlay_assets(cars):
@@ -152,7 +181,7 @@ def build_audio(cam, out_wav, cam_dur):
         wf.writeframes((mix * 32767).astype(np.int16).tobytes())
 
 
-def main(assets, cam, out, toon=False):
+def main(assets, cam, out, toon=False, avatar=False):
     cars = [Car(f"{assets}/sth{i}.png") for i in range(len(CARS))]
     cover = Car(f"{assets}/sth{len(CARS)}.png")
     grid, vignette, grain = R.make_grid(), R.make_vignette(), R.make_grain()
@@ -171,7 +200,8 @@ def main(assets, cam, out, toon=False):
         stdin=subprocess.PIPE)
     k = 0
     style = Toon() if toon else None
-    for arr in cam_frames(cam):
+    source = avatar_frames(cam, n_cam, grid) if avatar else cam_frames(cam)
+    for arr in source:
         if style is not None:
             arr = style(arr)
         if k >= n_cam:
@@ -190,7 +220,7 @@ def main(assets, cam, out, toon=False):
 
 
 if __name__ == "__main__":
-    args = [a for a in sys.argv[1:] if a != "--toon"]
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
     if len(args) != 3:
         sys.exit(__doc__)
-    main(*args, toon="--toon" in sys.argv)
+    main(*args, toon="--toon" in sys.argv, avatar="--avatar" in sys.argv)
