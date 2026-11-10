@@ -30,7 +30,7 @@ BEARD_COL = np.array([22, 26, 32], np.float32)  # BGR, very dark brown
 
 
 class FaceFilter:
-    def __init__(self, model_path, fps=30, sunkissed=True):
+    def __init__(self, model_path, fps=30, sunkissed=False):
         self.sunkissed = sunkissed
         opts = mp.tasks.vision.FaceLandmarkerOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=model_path),
@@ -115,8 +115,7 @@ class FaceFilter:
             beard_m, skin_m, face_h = self.masks(bgr.shape, p)
             # --- skin: smooth while keeping edges, then brighten slightly
             smooth = cv2.bilateralFilter(bgr, 0, 28, 9).astype(np.float32)
-            smooth = smooth * 1.05 + 6
-            a = skin_m[..., None] * 0.7
+            a = skin_m[..., None] * 0.45  # light smoothing only; colour stays the same
             out = out * (1 - a) + smooth * a
             # --- beard: only where hair already is; thicken it and fill thin patches inside it
             gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
@@ -142,12 +141,8 @@ class FaceFilter:
             out = self._sun_kiss(out, p, skin_m, beard_m, face_h)
         # --- global grade: gentle contrast, warmth, saturation
         out = np.clip(out, 0, 255).astype(np.uint8)
-        lab = cv2.cvtColor(out, cv2.COLOR_BGR2LAB).astype(np.float32)
-        lab[..., 0] = np.clip((lab[..., 0] - 128) * 1.06 + 131, 0, 255)
-        lab[..., 1] = np.clip((lab[..., 1] - 128) * 1.08 + 129, 0, 255)
-        lab[..., 2] = np.clip((lab[..., 2] - 128) * 1.08 + 130, 0, 255)
-        out = cv2.cvtColor(lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
-        sharp = cv2.addWeighted(out, 1.25, cv2.GaussianBlur(out, (0, 0), 2), -0.25, 0)
+        # original colours kept (no grade); just a light sharpen
+        sharp = cv2.addWeighted(out, 1.15, cv2.GaussianBlur(out, (0, 0), 2), -0.15, 0)
         return cv2.cvtColor(sharp, cv2.COLOR_BGR2RGB)
 
 
