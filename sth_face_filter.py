@@ -98,8 +98,15 @@ class FaceFilter:
             dense = cv2.GaussianBlur(dense, (0, 0), face_h * 0.006)
             dense = np.minimum(dense, beard_m)
             detail = gray - cv2.GaussianBlur(gray, (0, 0), 2.5)
-            target = BEARD_COL[None, None, :] + detail[..., None] * 1.25
-            amt = (dense * 0.78)[..., None]
+            # natural shade: sample the person's own beard colour (darker hair pixels), smoothed over time
+            sel = hair > 0.6
+            if sel.sum() > 500:
+                own = np.median(bgr[sel].astype(np.float32), axis=0)
+                self.shade = own if getattr(self, "shade", None) is None else self.shade * 0.9 + own * 0.1
+            shade = getattr(self, "shade", None)
+            shade = BEARD_COL if shade is None else shade * 0.92
+            target = shade[None, None, :] + detail[..., None] * 1.1
+            amt = (dense * 0.5)[..., None]
             out = out * (1 - amt) + target * amt
         # --- global grade: gentle contrast, warmth, saturation
         out = np.clip(out, 0, 255).astype(np.uint8)
