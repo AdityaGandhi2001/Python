@@ -5,6 +5,8 @@ Face-cam STH reel: your talking clip as the hook, then the beat-synced car revea
 
 --avatar replaces the footage with the Memoji-style cartoon from sth_avatar.py,
          lip-synced to the clip's voice (the video itself is not shown).
+--filter keeps the real face with a natural beauty filter and a fuller beard
+         (sth_face_filter.py, needs sth_assets/models/face_landmarker.task).
 --toon turns the face-cam footage into a painted cartoon (OpenCV stylization
 plus ink outlines, smoothed over time so the lines don't flicker).
 
@@ -181,7 +183,7 @@ def build_audio(cam, out_wav, cam_dur):
         wf.writeframes((mix * 32767).astype(np.int16).tobytes())
 
 
-def main(assets, cam, out, toon=False, avatar=False):
+def main(assets, cam, out, toon=False, avatar=False, beauty=False):
     cars = [Car(f"{assets}/sth{i}.png") for i in range(len(CARS))]
     cover = Car(f"{assets}/sth{len(CARS)}.png")
     grid, vignette, grain = R.make_grid(), R.make_vignette(), R.make_grain()
@@ -200,6 +202,9 @@ def main(assets, cam, out, toon=False, avatar=False):
         stdin=subprocess.PIPE)
     k = 0
     style = Toon() if toon else None
+    if beauty:
+        from sth_face_filter import FaceFilter
+        style = FaceFilter(f"{assets}/models/face_landmarker.task", fps=FPS)
     source = avatar_frames(cam, n_cam, grid) if avatar else cam_frames(cam)
     for arr in source:
         if style is not None:
@@ -210,6 +215,8 @@ def main(assets, cam, out, toon=False, avatar=False):
         k += 1
     for i in range(n_cam - k):  # pad if the decoder delivered fewer frames
         ff.stdin.write(arr.tobytes())
+    if hasattr(style, "det"):
+        style.det.close()  # release the MediaPipe face tracker cleanly
     n_reel = int((R.TOTAL - R.T_HOOK) * FPS)
     for fi in range(n_reel):
         t = R.T_HOOK + fi / FPS
@@ -223,4 +230,4 @@ if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     if len(args) != 3:
         sys.exit(__doc__)
-    main(*args, toon="--toon" in sys.argv, avatar="--avatar" in sys.argv)
+    main(*args, toon="--toon" in sys.argv, avatar="--avatar" in sys.argv, beauty="--filter" in sys.argv)
