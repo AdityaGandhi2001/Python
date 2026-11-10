@@ -30,7 +30,8 @@ BEARD_COL = np.array([22, 26, 32], np.float32)  # BGR, very dark brown
 
 
 class FaceFilter:
-    def __init__(self, model_path, fps=30):
+    def __init__(self, model_path, fps=30, sunkissed=True):
+        self.sunkissed = sunkissed
         opts = mp.tasks.vision.FaceLandmarkerOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=model_path),
             running_mode=mp.tasks.vision.RunningMode.VIDEO, num_faces=1)
@@ -77,6 +78,35 @@ class FaceFilter:
                 cv2.GaussianBlur(skin, (f * 2 + 1, f * 2 + 1), 0).astype(np.float32) / 255,
                 face_h)
 
+    def _sun_kiss(self, out, p, skin_m, beard_m, face_h):
+        """Golden, bronzed skin + soft warm glow on the face's high points + golden-hour grade."""
+        h, w = out.shape[:2]
+        img8 = np.clip(out, 0, 255).astype(np.uint8)
+        # all visible skin (face, neck, hands) by colour, softened -> smooth, even tan
+        ycc = cv2.cvtColor(img8, cv2.COLOR_BGR2YCrCb).astype(np.float32)
+        cr, cb = ycc[..., 1], ycc[..., 2]
+        skin = np.clip(1 - np.maximum(np.abs(cr - 152) / 22, np.abs(cb - 108) / 22), 0, 1)
+        skin = cv2.GaussianBlur(skin, (0, 0), face_h * 0.02) * (1 - beard_m * 0.6)
+        warm = out * np.array([0.86, 0.99, 1.07], np.float32) + np.array([0, 4, 12], np.float32)
+        a = (skin * 0.8)[..., None]
+        out = out * (1 - a) + warm * a
+        # soft glow on cheekbones, nose and forehead, inside the face only (no holes)
+        face = np.zeros((h, w), np.float32)
+        cv2.fillPoly(face, [p[FACE_OVAL].astype(np.int32)], 1.0)
+        face = cv2.GaussianBlur(face, (0, 0), face_h * 0.04)
+        glow = np.zeros((h, w), np.float32)
+        for idx, r in ((50, 0.11), (280, 0.11), (6, 0.08), (4, 0.06), (151, 0.13)):
+            cv2.circle(glow, tuple(int(v) for v in p[idx]), int(face_h * r), 1.0, -1)
+        glow = cv2.GaussianBlur(glow, (0, 0), face_h * 0.09)
+        glow = (np.clip(glow / max(1e-6, glow.max()), 0, 1) * face * (1 - beard_m))[..., None]
+        out = out + glow * np.array([8, 20, 34], np.float32)  # peach / rose-gold light
+        # golden-hour grade: warm highlights, gentle lift, soft bloom
+        lum = cv2.cvtColor(np.clip(out, 0, 255).astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32) / 255
+        hi = (lum ** 1.5)[..., None]
+        out = out + hi * np.array([-7, 4, 12], np.float32) + (1 - hi) * np.array([3, 2, 0], np.float32)
+        bloom = cv2.GaussianBlur(np.clip(out, 0, 255), (0, 0), 18)
+        return out * 0.9 + bloom * 0.1 + 2
+
     def __call__(self, rgb):
         p = self.landmarks(rgb)
         bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
@@ -108,6 +138,8 @@ class FaceFilter:
             target = shade[None, None, :] + detail[..., None] * 1.1
             amt = (dense * 0.5)[..., None]
             out = out * (1 - amt) + target * amt
+        if p is not None and self.sunkissed:
+            out = self._sun_kiss(out, p, skin_m, beard_m, face_h)
         # --- global grade: gentle contrast, warmth, saturation
         out = np.clip(out, 0, 255).astype(np.uint8)
         lab = cv2.cvtColor(out, cv2.COLOR_BGR2LAB).astype(np.float32)
