@@ -1,7 +1,10 @@
 """
 Face-cam STH reel: your talking clip as the hook, then the beat-synced car reveals.
 
-    python sth_facecam_reel.py sth_assets facecam.mov out.mp4
+    python sth_facecam_reel.py sth_assets facecam.mov out.mp4 [--toon]
+
+--toon turns the face-cam footage into a painted cartoon (OpenCV stylization
+plus ink outlines, smoothed over time so the lines don't flicker).
 
 Part 1: the face-cam clip full screen with a title overlay and a strip of the
         STH cars along the bottom; the beat plays quietly under your voice.
@@ -13,6 +16,7 @@ import subprocess
 import sys
 import wave
 
+import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 
@@ -42,6 +46,30 @@ def cam_frames(path):
             break
         yield np.frombuffer(buf, np.uint8).reshape(H, W, 3)
     p.wait()
+
+
+class Toon:
+    """Painted-cartoon filter for video frames (RGB in, RGB out)."""
+
+    def __init__(self):
+        self.edge_avg = None
+
+    def __call__(self, rgb):
+        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        small = cv2.resize(bgr, (540, 960), interpolation=cv2.INTER_AREA)
+        paint = cv2.stylization(small, sigma_s=60, sigma_r=0.45)
+        hsv = cv2.cvtColor(paint, cv2.COLOR_BGR2HSV).astype(np.float32)
+        hsv[..., 1] *= 1.18
+        hsv[..., 2] = hsv[..., 2] * 1.06 + 6
+        paint = cv2.cvtColor(np.clip(hsv, 0, 255).astype(np.uint8), cv2.COLOR_HSV2BGR)
+        g = cv2.medianBlur(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), 5)
+        e = cv2.adaptiveThreshold(g, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 11, 7)
+        e = (255 - e).astype(np.float32) / 255  # 1 where there is a line
+        self.edge_avg = e if self.edge_avg is None else self.edge_avg * 0.5 + e * 0.5
+        line = np.clip((self.edge_avg - 0.35) / 0.4, 0, 1)[..., None]
+        out = paint.astype(np.float32) * (1 - line * 0.92)
+        out = cv2.resize(np.clip(out, 0, 255).astype(np.uint8), (W, H), interpolation=cv2.INTER_CUBIC)
+        return cv2.cvtColor(out, cv2.COLOR_BGR2RGB)
 
 
 def make_overlay_assets(cars):
@@ -124,7 +152,7 @@ def build_audio(cam, out_wav, cam_dur):
         wf.writeframes((mix * 32767).astype(np.int16).tobytes())
 
 
-def main(assets, cam, out):
+def main(assets, cam, out, toon=False):
     cars = [Car(f"{assets}/sth{i}.png") for i in range(len(CARS))]
     cover = Car(f"{assets}/sth{len(CARS)}.png")
     grid, vignette, grain = R.make_grid(), R.make_vignette(), R.make_grain()
@@ -142,7 +170,10 @@ def main(assets, cam, out):
          "-shortest", "-movflags", "+faststart", out],
         stdin=subprocess.PIPE)
     k = 0
+    style = Toon() if toon else None
     for arr in cam_frames(cam):
+        if style is not None:
+            arr = style(arr)
         if k >= n_cam:
             break
         ff.stdin.write(cam_overlay(Image.fromarray(arr), k / FPS, n_cam / FPS, ov).tobytes())
@@ -159,6 +190,7 @@ def main(assets, cam, out):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
+    args = [a for a in sys.argv[1:] if a != "--toon"]
+    if len(args) != 3:
         sys.exit(__doc__)
-    main(*sys.argv[1:])
+    main(*args, toon="--toon" in sys.argv)
