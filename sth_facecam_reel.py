@@ -1,0 +1,164 @@
+"""
+Face-cam STH reel: your talking clip as the hook, then the beat-synced car reveals.
+
+    python sth_facecam_reel.py sth_assets facecam.mov out.mp4
+
+Part 1: the face-cam clip full screen with a title overlay and a strip of the
+        STH cars along the bottom; the beat plays quietly under your voice.
+Part 2: the reel from sth_reveal_video.py, starting at the first car reveal.
+"""
+
+import math
+import subprocess
+import sys
+import wave
+
+import numpy as np
+from PIL import Image, ImageDraw
+
+import sth_reveal_video as R
+from sth_reveal_video import (CARS, F_BLACK, F_BLACK_I, FPS, H, TOTAL_MIXES, W, Car, caption_box, p_,
+                              slam_text)
+
+SR = 44100
+BED_GAIN = 0.13  # music level under the voice
+
+
+def probe_duration(path):
+    out = subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                                   "-of", "csv=p=0", path])
+    return float(out)
+
+
+def cam_frames(path):
+    """Yield the clip's frames as 1080x1920 RGB arrays (HDR iPhone footage converted to 8-bit)."""
+    p = subprocess.Popen(["ffmpeg", "-loglevel", "error", "-i", path, "-map", "0:v:0",
+                          "-vf", f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},format=rgb24",
+                          "-r", str(FPS), "-f", "rawvideo", "-"], stdout=subprocess.PIPE)
+    n = W * H * 3
+    while True:
+        buf = p.stdout.read(n)
+        if len(buf) < n:
+            break
+        yield np.frombuffer(buf, np.uint8).reshape(H, W, 3)
+    p.wait()
+
+
+def make_overlay_assets(cars):
+    top = Image.linear_gradient("L").rotate(180).resize((W, 520)).point(lambda v: int(v * 0.75))
+    shade_top = Image.new("RGBA", (W, 520), (0, 0, 0, 255))
+    shade_top.putalpha(top)
+    bot = Image.linear_gradient("L").resize((W, 420)).point(lambda v: int(v * 0.8))
+    shade_bot = Image.new("RGBA", (W, 420), (0, 0, 0, 255))
+    shade_bot.putalpha(bot)
+    small = [c.img.resize((300, int(c.img.height * 300 / c.img.width)), Image.LANCZOS) for c in cars]
+    return shade_top, shade_bot, small
+
+
+def cam_overlay(frame, t, dur, assets):
+    shade_top, shade_bot, small = assets
+    # slow push-in so the shot feels alive
+    s = 1 + 0.05 * (t / dur)
+    if s > 1.001:
+        w2, h2 = int(W * s), int(H * s)
+        frame = frame.resize((w2, h2), Image.BILINEAR).crop(((w2 - W) // 2, (h2 - H) // 2,
+                                                             (w2 - W) // 2 + W, (h2 - H) // 2 + H))
+    base = frame.convert("RGBA")
+    base.alpha_composite(shade_top, (0, 0))
+    base.alpha_composite(shade_bot, (0, H - 420))
+    slam_text(base, W / 2, 150, "2027 STH", F_BLACK_I, 150, (255, 255, 255), p_(t, 0.15, 0.3),
+              stroke=6, sfill=(0, 0, 0), start=1.8)
+    caption_box(base, W / 2, 300, f"{len(CARS)}/{TOTAL_MIXES} REVEALED", font_(58), (0, 0, 0),
+                (255, 214, 0), p_(t, 0.6, 0.3), emo="👀", rot=-3)
+    # cars rolling along the bottom
+    x = W - (t * 260) % (len(small) * 330) - 330
+    for k in range(len(small) * 2):
+        im = small[k % len(small)]
+        xx = x + k * 330
+        if -330 < xx < W:
+            base.alpha_composite(im, (int(xx), H - 150 - im.height // 2))
+    # flash into the reel
+    if t > dur - 0.25:
+        a = (t - (dur - 0.25)) / 0.25
+        white = Image.new("RGBA", (W, H), (255, 255, 255, int(255 * a * 0.85)))
+        base.alpha_composite(white)
+    return np.asarray(base.convert("RGB"))
+
+
+def font_(size):
+    return R.font(F_BLACK, size)
+
+
+def read_wav_mono(path):
+    with wave.open(path) as wf:
+        sr, ch, n = wf.getframerate(), wf.getnchannels(), wf.getnframes()
+        a = np.frombuffer(wf.readframes(n), np.int16).astype(np.float32) / 32768
+    if ch > 1:
+        a = a.reshape(-1, ch).mean(1)
+    assert sr == SR, sr
+    return a
+
+
+def build_audio(cam, out_wav, cam_dur):
+    beat_wav = out_wav.replace(".wav", "_beat.wav")
+    R.synth_audio(beat_wav)
+    beat = read_wav_mono(beat_wav)
+    voice_wav = out_wav.replace(".wav", "_voice.wav")
+    subprocess.check_call(["ffmpeg", "-loglevel", "error", "-y", "-i", cam, "-map", "0:a:0", "-ac", "1",
+                           "-ar", str(SR), voice_wav])
+    voice = read_wav_mono(voice_wav)
+    n_cam = int(cam_dur * SR)
+    voice = np.pad(voice, (0, max(0, n_cam - len(voice))))[:n_cam]
+    voice = voice / max(1e-6, np.abs(voice).max()) * 0.95
+    start = int(R.T_HOOK * SR)
+    bed = beat[start:start + n_cam]
+    bed = np.pad(bed, (0, n_cam - len(bed)))
+    part1 = voice + bed * BED_GAIN
+    part2 = beat[start:]
+    mix = np.concatenate([part1, part2])
+    mix = mix / max(1e-6, np.abs(mix).max()) * 0.92
+    with wave.open(out_wav, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(SR)
+        wf.writeframes((mix * 32767).astype(np.int16).tobytes())
+
+
+def main(assets, cam, out):
+    cars = [Car(f"{assets}/sth{i}.png") for i in range(len(CARS))]
+    cover = Car(f"{assets}/sth{len(CARS)}.png")
+    grid, vignette, grain = R.make_grid(), R.make_vignette(), R.make_grain()
+    ov = make_overlay_assets(cars)
+    cam_dur = probe_duration(cam)
+    n_cam = int(round(cam_dur * FPS))
+
+    wav = out.rsplit(".", 1)[0] + "_audio.wav"
+    build_audio(cam, wav, n_cam / FPS)
+
+    ff = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
+         "-r", str(FPS), "-i", "-", "-i", wav, "-c:v", "libx264", "-preset", "slow", "-crf", "20",
+         "-maxrate", "9M", "-bufsize", "18M", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "256k",
+         "-shortest", "-movflags", "+faststart", out],
+        stdin=subprocess.PIPE)
+    k = 0
+    for arr in cam_frames(cam):
+        if k >= n_cam:
+            break
+        ff.stdin.write(cam_overlay(Image.fromarray(arr), k / FPS, n_cam / FPS, ov).tobytes())
+        k += 1
+    for i in range(n_cam - k):  # pad if the decoder delivered fewer frames
+        ff.stdin.write(arr.tobytes())
+    n_reel = int((R.TOTAL - R.T_HOOK) * FPS)
+    for fi in range(n_reel):
+        t = R.T_HOOK + fi / FPS
+        ff.stdin.write(R.render_frame(t, cars, cover, grid, vignette, grain, fi).tobytes())
+    ff.stdin.close()
+    ff.wait()
+    print(f"wrote {out}: {n_cam / FPS + R.TOTAL - R.T_HOOK:.1f}s")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        sys.exit(__doc__)
+    main(*sys.argv[1:])
