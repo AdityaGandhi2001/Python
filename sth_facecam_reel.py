@@ -204,7 +204,10 @@ def main(assets, cam, out, toon=False, avatar=False, beauty=False):
     style = Toon() if toon else None
     if beauty:
         from sth_face_filter import FaceFilter
-        style = FaceFilter(f"{assets}/models/face_landmarker.task", fps=FPS)
+        import os
+        grade = f"{assets}/look_grade.json"
+        style = FaceFilter(f"{assets}/models/face_landmarker.task", fps=FPS,
+                           grade_path=grade if os.path.exists(grade) else None)
     source = avatar_frames(cam, n_cam, grid) if avatar else cam_frames(cam)
     for arr in source:
         if style is not None:

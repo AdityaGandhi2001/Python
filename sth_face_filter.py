@@ -30,8 +30,13 @@ BEARD_COL = np.array([22, 26, 32], np.float32)  # BGR, very dark brown
 
 
 class FaceFilter:
-    def __init__(self, model_path, fps=30, sunkissed=False):
+    def __init__(self, model_path, fps=30, sunkissed=False, grade_path=None):
+        """grade_path: optional look_grade.json - a colour look fitted from a before/after pair."""
         self.sunkissed = sunkissed
+        self.grade = None
+        if grade_path:
+            import json
+            self.grade = np.array(json.load(open(grade_path))["coef"], np.float32)
         opts = mp.tasks.vision.FaceLandmarkerOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=model_path),
             running_mode=mp.tasks.vision.RunningMode.VIDEO, num_faces=1)
@@ -107,7 +112,16 @@ class FaceFilter:
         bloom = cv2.GaussianBlur(np.clip(out, 0, 255), (0, 0), 18)
         return out * 0.9 + bloom * 0.1 + 2
 
+    def apply_grade(self, rgb):
+        x = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR).reshape(-1, 3).astype(np.float32) / 255
+        b, g, r = x[:, 0], x[:, 1], x[:, 2]
+        f = np.stack([np.ones_like(b), b, g, r, b * b, g * g, r * r, b * g, b * r, g * r, b ** 3, g ** 3, r ** 3], 1)
+        y = np.clip(f @ self.grade, 0, 1).reshape(rgb.shape) * 255
+        return cv2.cvtColor(y.astype(np.uint8), cv2.COLOR_BGR2RGB)
+
     def __call__(self, rgb):
+        if self.grade is not None:
+            rgb = self.apply_grade(rgb)
         p = self.landmarks(rgb)
         bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         out = bgr.astype(np.float32)
@@ -150,7 +164,7 @@ if __name__ == "__main__":
     import sys
     model, src, dst = sys.argv[1:4]
     rgb = cv2.cvtColor(cv2.imread(src), cv2.COLOR_BGR2RGB)
-    ff = FaceFilter(model)
+    ff = FaceFilter(model, grade_path=sys.argv[4] if len(sys.argv) > 4 else None)
     out = ff(rgb)
     p = ff.pts
     b, s, _ = ff.masks(rgb.shape, p)
