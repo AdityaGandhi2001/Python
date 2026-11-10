@@ -1,0 +1,11 @@
+{
+  "_note": "Which edges of each car photo are cut off by the original frame; those edges are kept off-screen.",
+  "sth0": [],
+  "sth1": ["left"],
+  "sth2": ["right"],
+  "sth3": ["left"],
+  "sth4": ["left", "right"],
+  "sth5": ["left"],
+  "sth6": ["right"],
+  "sth7": ["left", "right"]
+}

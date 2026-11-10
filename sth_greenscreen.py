@@ -72,8 +72,8 @@ def scene_car(base, t, i, car):
     pin = expo_out(p_(t, 0.1, 0.5))
     pout = clamp01((t - (T_CAR - 0.3)) / 0.3)
     side = 1 if i % 2 == 0 else -1
-    dx = side * (1 - pin) * W - side * pout * W
-    cx, cy = W / 2 + dx, 690 + 8 * math.sin(t * 2.2)
+    cx, dy, _ = car.motion(pin, pout, side)
+    cy = 690 + 8 * math.sin(t * 2.2) + dy
     x0, y0 = int(cx - car.img.width / 2), int(cy - car.img.height / 2)
     gp = car.glow_pad
     base.alpha_composite(car.glow, (x0 - gp, y0 - gp))

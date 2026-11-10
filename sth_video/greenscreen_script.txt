@@ -8,8 +8,8 @@ Talk to the camera; the background changes on its own.
 0:15  Mix D      '88 Mitsubishi Starion
 0:19  Mix E      Aston Martin DB5 Safari Edition
 0:23  Mix F      Ferrari 12Cilindri
-0:27  Mix ?      Porsche 911 Carrera T (mix not confirmed yet)
-0:31  Mix ?      1967 Shelby GT-500 (mix not confirmed yet)
+0:27  Mix G      Porsche 911 Carrera T
+0:31  Mix H      1967 Shelby GT-500
 0:35  Hidden     Mix J, K, L, M, N, P, Q - "7 more still hidden"
 0:40  Line-up    All 15 slots - "which one are you hunting? comment below"
 

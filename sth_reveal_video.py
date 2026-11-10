@@ -33,8 +33,8 @@ CARS = [
     ("MIX D", "'88 MITSUBISHI STARION", "80s rizz fr", "💙"),
     ("MIX E", "ASTON MARTIN DB5 SAFARI", "lowkey the GOAT", "🐐"),
     ("MIX F", "FERRARI 12CILINDRI", "gold ferrari?? instant cop", "🤑"),
-    ("MIX ?", "PORSCHE 911 CARRERA T", "no notes", "🫡"),
-    ("MIX ?", "1967 SHELBY GT-500", "golden era", "🏆"),
+    ("MIX G", "PORSCHE 911 CARRERA T", "no notes", "🫡"),
+    ("MIX H", "1967 SHELBY GT-500", "golden era", "🏆"),
 ]
 HIDDEN = ["J", "K", "L", "M", "N", "P", "Q"]  # mixes not revealed yet
 TOTAL_MIXES = len(CARS) + len(HIDDEN)  # 15
@@ -106,9 +106,24 @@ def accent_of(img):
     return tuple(int(v) for v in c)
 
 
+def load_cuts(path):
+    """Edges of a car photo that were cut off by the source frame (from cuts.json)."""
+    import json
+    import os
+    f = os.path.join(os.path.dirname(path), "cuts.json")
+    key = os.path.splitext(os.path.basename(path))[0]
+    try:
+        return set(json.load(open(f)).get(key, []))
+    except FileNotFoundError:
+        return set()
+
+
 class Car:
     def __init__(self, path, width=1000):
         im = Image.open(path).convert("RGBA")
+        self.cut = load_cuts(path)
+        if self.cut == {"left", "right"}:
+            width = max(width, W + 24)  # cut on both sides: span the whole frame
         s = width / im.width
         self.img = im.resize((width, int(im.height * s)), Image.LANCZOS)
         self.accent = accent_of(self.img)
@@ -133,6 +148,21 @@ class Car:
         ra = Image.fromarray((np.asarray(ra).astype(float) * np.asarray(grad) / 255).astype(np.uint8))
         ref.putalpha(ra)
         self.reflection = ref
+
+    def rest_cx(self):
+        """Resting x centre that keeps any cut-off edge just outside the frame."""
+        if self.cut == {"left", "right"} or not self.cut:
+            return W / 2
+        if "left" in self.cut:
+            return self.img.width / 2 - 12
+        return W - self.img.width / 2 + 12
+
+    def motion(self, pin, pout, default_side):
+        """(cx, dy, ghost_dir): slide in from the cut side, or drop in if cut on both sides."""
+        if self.cut == {"left", "right"}:
+            return self.rest_cx(), -(1 - pin) * 700 + pout * 900, (0, -1)
+        side = 1 if "right" in self.cut else -1 if "left" in self.cut else default_side
+        return self.rest_cx() + side * (1 - pin) * W * 1.1 - side * pout * W * 1.2, 0, (side, 0)
 
 
 def make_vignette():
@@ -308,9 +338,9 @@ def scene_car(base, t, i, car, side):
     # car slide-in with motion trail, then float
     pin = expo_out(p_(t, 0.02, 0.32))
     pout = clamp((t - (T_CAR - 0.12)) / 0.12)
-    dx = side * (1 - pin) * W * 1.1 - side * pout * W * 1.2
+    cx, dy, (gdx, gdy) = car.motion(pin, pout, side)
     float_y = 10 * math.sin(t * 3.2)
-    cx, cy = W / 2 + dx, 1180 + float_y
+    cy = 1180 + float_y + dy
     x0, y0 = int(cx - car.img.width / 2), int(cy - car.img.height / 2)
 
     gp = car.glow_pad
@@ -324,7 +354,7 @@ def scene_car(base, t, i, car, side):
     moving = pin < 0.97 or pout > 0
     if moving:
         for k, gh in enumerate(car.ghosts):
-            base.alpha_composite(gh, (int(x0 + side * (k + 1) * 70), y0))
+            base.alpha_composite(gh, (int(x0 + gdx * (k + 1) * 70), int(y0 + gdy * (k + 1) * 60)))
     base.alpha_composite(car.img, (x0, y0))
 
     # name + vibe captions
@@ -413,7 +443,7 @@ def scene_outro(base, t, cars):
         xx = x + k * 340
         if -340 < xx < W:
             base.alpha_composite(im, (int(xx), 1430 - im.height // 2))
-    draw_text_c(base, W / 2, 1720, "pics: @your.choice_hotwheels", font(F_XB, 30),
+    draw_text_c(base, W / 2, 1720, "pics: @hotwheelscollectorofficial", font(F_XB, 30),
                 (255, 255, 255, 140))
 
 
