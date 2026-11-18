@@ -27,8 +27,8 @@ PALM = [0, 1, 5, 9, 13, 17]
 
 
 class Segmenter:
-    def __init__(self, fps):
-        self.rembg = new_session("isnet-general-use")
+    def __init__(self, fps, use_rembg=True):
+        self.rembg = new_session("isnet-general-use") if use_rembg else None
         opts = mp.tasks.vision.HandLandmarkerOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=f"{MODELS}/hand_landmarker.task"),
             running_mode=mp.tasks.vision.RunningMode.VIDEO, num_hands=2,
@@ -63,7 +63,10 @@ class Segmenter:
 
     def __call__(self, rgb):
         h, w = rgb.shape[:2]
-        sal = np.asarray(remove(Image.fromarray(rgb), session=self.rembg, only_mask=True)).astype(np.float32) / 255
+        if self.rembg is not None:
+            sal = np.asarray(remove(Image.fromarray(rgb), session=self.rembg, only_mask=True)).astype(np.float32) / 255
+        else:
+            sal = np.zeros(rgb.shape[:2], np.float32)
         hm = self.hand_mask(rgb)
         self.k += 1
         sw, sh = w // 2, h // 2
