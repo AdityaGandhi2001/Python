@@ -38,8 +38,7 @@ EDL = [
     ("open",    2.50,  3.90, 1.50, 1.04, 1.04),
     ("tear",    5.00,  6.90, 1.60, 1.04, 1.10),
     ("tray",    8.00,  9.90, 1.45, 1.00, 1.06),
-    ("flick",  12.00, 12.60, 0.40, 1.00, 1.12),
-    ("car",    12.60, 16.30, 1.00, 1.12, 1.00),
+    ("car",    12.50, 16.30, 1.00, 1.14, 1.00),
     ("end",    15.60, 15.60, 0.00, 1.00, 1.00),  # freeze for the end card
 ]
 END_LEN = 1.6
@@ -55,6 +54,8 @@ def build_timeline():
         for j in range(n):
             lt = j / FPS
             src = s0 if sp == 0 else s0 + lt * sp
+            if sp >= 1.0:  # real-time / sped-up: use whole source frames (no blending, no ghosting)
+                src = round(src * 30) / 30
             tl.append((i, lt, dur, src))
         t_out += n / FPS
     return tl, starts, t_out
@@ -83,7 +84,20 @@ class Source:
         self._cache = {}
 
     def alpha(self, k):
-        return cv2.imread(f"{self.matte}/alpha_{k:05d}.png", cv2.IMREAD_GRAYSCALE).astype(np.float32) / 255
+        a = cv2.imread(f"{self.matte}/alpha_{k:05d}.png", cv2.IMREAD_GRAYSCALE).astype(np.float32) / 255
+        # keep the main subject: drop pieces much smaller than the biggest one (stray roadside etc.)
+        n, lab, st, _ = cv2.connectedComponentsWithStats((a > 0.5).astype(np.uint8))
+        if n > 2:
+            areas = st[1:, cv2.CC_STAT_AREA]
+            drop = np.isin(lab, np.where(areas < areas.max() * 0.15)[0] + 1).astype(np.uint8)
+            a[cv2.dilate(drop, np.ones((9, 9), np.uint8)) > 0] = 0
+        # solid subject: fill holes / see-through patches inside the outline, keep soft outer edges
+        hard = (a > 0.35).astype(np.uint8)
+        cnts, _ = cv2.findContours(hard, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        solid = np.zeros_like(hard)
+        cv2.drawContours(solid, cnts, -1, 1, -1)
+        inner = cv2.GaussianBlur(cv2.erode(solid, np.ones((9, 9), np.uint8)).astype(np.float32), (0, 0), 2)
+        return np.maximum(a, inner)
 
     def at(self, t):
         """RGB, alpha and hands at source time t (flow-interpolated between frames)."""
@@ -93,7 +107,7 @@ class Source:
         f = x - k0
         a0, i0 = self.alpha(k0), np.asarray(self.frames[k0])
         hands = self.hands[k0 if f < 0.5 else k1]
-        if f < 0.04 or k1 == k0:
+        if f < 0.04 or f > 0.96 or k1 == k0:
             return i0, a0, hands
         a1, i1 = self.alpha(k1), np.asarray(self.frames[k1])
         g0 = cv2.cvtColor(i0, cv2.COLOR_RGB2GRAY)
@@ -387,7 +401,7 @@ def soundtrack(path, total, starts):
         return s * np.sin(np.linspace(0, np.pi, m)) * 0.12
 
     names = [e[0] for e in EDL]
-    t_flick = starts[names.index("flick")]
+    t_flick = starts[names.index("car")] - 1.5
     t_car = starts[names.index("car")]
     t_end = starts[names.index("end")]
     t_tear = starts[names.index("tear")]
