@@ -14,6 +14,16 @@ def font(s, w="Black"):
         if os.path.exists(F + n): return ImageFont.truetype(F + n, s)
     return ImageFont.load_default()
 
+LINES = ["Wait... did a Hot Wheels car just open my drink?", "Meet the Hot Wheels Carbonator!",
+ "From the side, it looks exactly like a little bottle... but turn it around, and boom! It's a proper race car.",
+ "And yes, the back actually works as a bottle opener. Glass bottle, can, anything!",
+ "Bring it out with your friends, and everyone will want one.",
+ "But finding these in stores? Almost impossible. They're gone the moment they land.",
+ f"That's why you should follow {STORE} on Instagram, for all the latest diecast drops.",
+ "Join our WhatsApp group to get Hot Wheels, Matchbox and Mini GT at MRP, before anyone else.",
+ "Link in bio. Don't miss the next drop!"]
+KEY = {"hot", "wheels", "carbonator!", "boom!", "opener.", "impossible.", "follow", "whatsapp", "mrp,", "drop!", "everyone", "race"}
+
 def dur(p):
     with wave.open(p) as w: return w.getnframes() / w.getframerate()
 segs, t = [], 0.4
@@ -46,6 +56,7 @@ _cw = _b.height * 9 // 16; _x = 318 * _b.width // 637 - _cw // 2
 _bb = _b.crop((_x, 0, _x + _cw, _b.height)).resize((W, H), Image.LANCZOS).filter(ImageFilter.UnsharpMask(3, 120))
 BEER = _bb.crop((0, 0, W, 1)).resize((W, 200)).filter(ImageFilter.GaussianBlur(4)).resize((W, H))
 BEER.paste(_bb, (0, 170))
+HERO = BEER.filter(ImageFilter.GaussianBlur(28)).point(lambda v: int(v * 0.8))
 BEER_CAP = (W // 2, int(H * 12 / 360))  # bottle-cap position in the BEER frame
 CUR = [None]
 
@@ -99,8 +110,8 @@ def sparkles(d, t, n=40, seed=1, col=(255, 255, 255)):
         d.ellipse([x - r, y - r, x + r, y + r], fill=tuple(int(c * a) for c in col))
 
 def badge(d):
-    d.ellipse([W - 92, H - 92, W - 32, H - 32], fill=(255, 120, 20))
-    f = font(15); s = HANDLE[:9]; d.text((W - 62 - d.textlength(s, font=f) / 2, H - 70), s, font=f, fill="white")
+    d.ellipse([W - 92, 32, W - 32, 92], fill=(255, 120, 20))
+    f = font(15); s = HANDLE[:9]; d.text((W - 62 - d.textlength(s, font=f) / 2, 54), s, font=f, fill="white")
 
 def scene(i, lt, gt):
     if i == 0:  # cap pop
@@ -112,7 +123,7 @@ def scene(i, lt, gt):
             for j in range(12):
                 a = j / 12 * 6.28; r = 40 + k * 300
                 d.ellipse([W / 2 + math.cos(a) * r - 6, 210 + math.sin(a) * r - 6, W / 2 + math.cos(a) * r + 6, 210 + math.sin(a) * r + 6], fill=(255, 250, 220))
-        ctext(d, 1050, "WAIT...", 90, Y, stroke=5)
+        ctext(d, 120, "WAIT...", 90, Y, stroke=5)
     elif i == 1:  # title
         im = getbg(1, (60, 60, 70), (15, 15, 20)); CUR[0] = im; d = ImageDraw.Draw(im); sparkles(d, gt, seed=2)
         sh = 8 * math.sin(lt * 40) * max(0, 1 - lt * 2); k = ease(lt / 0.4)
@@ -136,17 +147,14 @@ def scene(i, lt, gt):
             d.rounded_rectangle([W / 2 - 120, 520, W / 2 + 120, 1040], 30, fill=(200, 205, 215), outline=(240, 240, 250), width=6)
             ctext(d, 720, "YOUR", 40, (90, 70, 30)); ctext(d, 770, "FAVOURITE", 40, (90, 70, 30)); ctext(d, 820, "DRINK", 40, (90, 70, 30))
             car(d, W / 2 - 170, 470 + 20 * math.sin(lt * 6), 0.8, rot=0.5)
-        ctext(d, 1120, "IT OPENS BOTTLES!", 58, R, stroke=4, sc=(255, 255, 255))
+        ctext(d, 120, "IT OPENS BOTTLES!", 58, R, stroke=4, sc=(255, 255, 255))
     elif i == 4:  # friends
-        im = getbg(4, (255, 170, 80), (180, 60, 90)); CUR[0] = im; d = ImageDraw.Draw(im); rnd = random.Random(4)
+        im = HERO.copy(); CUR[0] = im; d = ImageDraw.Draw(im); rnd = random.Random(4)
         for j in range(80):
             x = rnd.uniform(0, W); y = (rnd.uniform(0, H) + lt * rnd.uniform(200, 500)) % H
             d.rectangle([x, y, x + 12, y + 6], fill=rnd.choice([Y, TEAL, PINK, (255, 255, 255)]))
-        for j, x in enumerate((180, 360, 540)):
-            yb = 980 - (25 * abs(math.sin(lt * 5 + j)))
-            d.ellipse([x - 55, yb - 260, x + 55, yb - 150], fill=(150, 95, 60)); d.rounded_rectangle([x - 90, yb - 140, x + 90, yb + 200], 60, fill=[TEAL, Y, (250, 250, 250)][j])
-        car(d, W / 2, 470 - 30 * abs(math.sin(lt * 4)), 0.6)
-        ctext(d, 170, "EVERYONE WANTS ONE", 50, (255, 255, 255), stroke=4)
+        car(d, W / 2, 640 - 20 * math.sin(lt * 2), 1.35 + 0.05 * lt, rot=-0.08)
+        ctext(d, 260, "EVERYONE", 92, (255, 255, 255), stroke=5); ctext(d, 370, "WANTS ONE", 92, Y, stroke=5)
     elif i == 5:  # sold out
         im = getbg(5, (110, 35, 25), (40, 15, 10)); CUR[0] = im; d = ImageDraw.Draw(im)
         for r in range(4):
@@ -175,7 +183,7 @@ def scene(i, lt, gt):
         d = ImageDraw.Draw(im); k = ease((lt - 0.8) / 0.4)
         if k > 0:
             ctext(d, 120, "FOLLOW!", int(90 * k) + 1, Y, stroke=6, sc=(255, 90, 0))
-        ctext(d, 1160, STORE, 48, (255, 255, 255), stroke=3, sc=(150, 50, 255))
+        ctext(d, 1065, STORE, 48, (255, 255, 255), stroke=3, sc=(150, 50, 255))
     elif i == 7:  # whatsapp
         im = getbg(7, (10, 40, 30), (5, 15, 10)); CUR[0] = im; d = ImageDraw.Draw(im)
         def scr(s, x0, y0, w, h):
@@ -201,8 +209,57 @@ def scene(i, lt, gt):
         d.text((190, y + 70), "New drop is now LIVE!", font=font(22, "Bold"), fill=(40, 40, 40))
         d.text((190, y + 105), "Limited stock • DM to claim", font=font(19, "Regular"), fill=(90, 90, 90))
         car(d, W / 2, 760, 1.2 + 0.05 * math.sin(lt * 4))
-        ctext(d, 980, "LINK IN BIO", 70, Y, stroke=5, sc=R); ctext(d, 1080, HANDLE, 44, (255, 255, 255))
+        ctext(d, 940, "LINK IN BIO", 70, Y, stroke=5, sc=R); ctext(d, 1030, HANDLE, 44, (255, 255, 255))
     badge(ImageDraw.Draw(im))
+    return im
+
+_yy, _xx = [Image.linear_gradient("L").resize((W, H)), Image.linear_gradient("L").rotate(90).resize((W, H))]
+VIG = Image.radial_gradient("L").resize((W, H)).point(lambda v: min(150, int(max(0, v - 150) * 1.2)))
+GRAIN = [Image.effect_noise((W, H), 28).convert("RGB") for _ in range(6)]
+WARM = Image.new("RGB", (W, H), (255, 160, 60))
+WORDS = []
+for j, (st, du) in enumerate(segs):
+    ws = LINES[j].split(); tot = sum(len(w) + 2 for w in ws); t0 = st
+    for w in ws:
+        d0 = du * (len(w) + 2) / tot; WORDS.append((t0, t0 + d0, w, j)); t0 += d0
+
+def captions(im, gt):
+    cur = [k for k, w in enumerate(WORDS) if w[0] <= gt < w[1] + 0.15]
+    if not cur: return
+    k = cur[-1]; seg = WORDS[k][3]; idx = [n for n, w in enumerate(WORDS) if w[3] == seg]
+    pos = idx.index(k); c0 = pos // 3 * 3; chunk = [WORDS[n] for n in idx[c0:c0 + 3]]
+    d = ImageDraw.Draw(im); f = font(54); sp = 16
+    widths = [d.textlength(w[2].upper(), font=f) for w in chunk]
+    while sum(widths) + sp * len(chunk) > W - 60 and len(chunk) > 1:
+        chunk = chunk[:-1] if WORDS[k] is not chunk[-1] else chunk[1:]; widths = [d.textlength(w[2].upper(), font=f) for w in chunk]
+    x = (W - sum(widths) - sp * (len(chunk) - 1)) / 2
+    for w, wd in zip(chunk, widths):
+        on = w is WORDS[k]; pop = 1.0
+        col = Y if (on or w[2].lower() in KEY) else (255, 255, 255)
+        if on:
+            age = gt - w[0]; pop = 1 + 0.18 * max(0, 1 - age / 0.12)
+            d.rounded_rectangle([x - 10, 1150, x + wd + 10, 1222], 14, fill=(230, 30, 60))
+            col = (255, 255, 255)
+        ff = font(int(54 * pop)); dy = (54 * pop - 54) / 2
+        d.text((x - (wd * pop - wd) / 2, 1155 - dy), w[2].upper(), font=ff, fill=col, stroke_width=4, stroke_fill=(0, 0, 0))
+        x += wd + sp
+
+def post(im, i, st, gt):
+    z = 1.0 + 0.10 * (1 - ease(st / 0.35)) + 0.012 * st          # punch-in then slow push
+    if z != 1:
+        w2, h2 = int(W * z), int(H * z); im = im.resize((w2, h2), Image.BILINEAR).crop(((w2 - W) // 2, (h2 - H) // 2, (w2 - W) // 2 + W, (h2 - H) // 2 + H))
+    if i and st < 0.18:                                             # zoom-blur transition
+        a = 1 - st / 0.18; acc = im
+        for n in range(1, 5):
+            zz = 1 + 0.05 * n * a; w2, h2 = int(W * zz), int(H * zz)
+            l = im.resize((w2, h2), Image.BILINEAR).crop(((w2 - W) // 2, (h2 - H) // 2, (w2 - W) // 2 + W, (h2 - H) // 2 + H))
+            acc = Image.blend(acc, l, 1 / (n + 1))
+        im = Image.blend(acc, Image.new("RGB", (W, H), "white"), 0.35 * a)
+    im = Image.blend(im, WARM, 0.06)                                # warm grade
+    im = Image.eval(im, lambda v: int(255 * (0.5 + 0.5 * math.tanh((v / 255 - 0.5) * 2.4) / math.tanh(1.2))))  # S-curve contrast
+    im = Image.composite(Image.new("RGB", (W, H)), im, VIG)          # vignette
+    im = Image.blend(im, GRAIN[int(gt * FPS) % 6], 0.035)            # film grain
+    captions(im, gt)
     return im
 
 os.makedirs("frames", exist_ok=True)
@@ -213,16 +270,62 @@ for n in range(N):
         if gt >= s - GAP / 2: i = j
     lt = gt - segs[i][0]
     im = scene(i, max(0, lt), gt)
-    sw = segs[i][0] - GAP / 2  # white flash transition
-    if i and 0 <= gt - sw < 0.12: im = Image.blend(im, Image.new("RGB", (W, H), "white"), 0.6 * (1 - (gt - sw) / 0.12))
+    im = post(im, i, gt - (segs[i][0] - GAP / 2), gt)
     im.save(f"frames/{n:05d}.jpg", quality=90)
 
 inputs, filt = [], []
 for j, (s, _) in enumerate(segs):
     inputs += ["-i", f"{VO}/{j}.wav"]; filt.append(f"[{j + 1}:a]adelay={int(s * 1000)}|{int(s * 1000)}[a{j}]")
-filt.append("".join(f"[a{j}]" for j in range(9)) + "amix=inputs=9:normalize=0,apad[vo]")
-filt.append(f"anoisesrc=d={TOTAL}:c=pink:a=0.0,volume=0[sil]")
+filt.append("".join(f"[a{j}]" for j in range(9)) + "amix=inputs=9:normalize=0,apad,asplit[vo][sc]")
+import numpy as np
+SR = 44100; n = int(TOTAL * SR); mus = np.zeros(n); sfx = np.zeros(n); rng = np.random.default_rng(1)
+bpm = 120; beat = 60 / bpm; tt = np.arange(int(0.4 * SR)) / SR
+kick = np.sin(2 * np.pi * (50 + 120 * np.exp(-tt * 30)) * tt) * np.exp(-tt * 9)
+hat = rng.standard_normal(int(0.05 * SR)) * np.exp(-np.arange(int(0.05 * SR)) / SR * 90); hat = np.diff(hat, prepend=0)
+clap = rng.standard_normal(int(0.2 * SR)) * np.exp(-np.arange(int(0.2 * SR)) / SR * 25)
+roots = [55.0, 55.0, 43.65, 49.0]
+def add(buf, x, t0, g=1.0):
+    a = int(t0 * SR); b = min(n, a + len(x))
+    if a < n: buf[a:b] += g * x[:b - a]
+for b in range(int(TOTAL / beat) + 1):
+    t0 = b * beat
+    add(mus, kick, t0, 0.9)
+    add(mus, hat, t0 + beat / 2, 0.25); add(mus, hat, t0 + beat / 4 * 3, 0.12)
+    if b % 2: add(mus, clap, t0, 0.35)
+    f0 = roots[(b // 4) % 4]; bt = np.arange(int(beat * SR)) / SR
+    bass = np.tanh(2 * np.sin(2 * np.pi * f0 * bt)) * np.minimum(1, bt * 40) * np.exp(-bt * 3)
+    add(mus, bass, t0, 0.35)
+    if b % 4 == 0:
+        pt = np.arange(int(beat * 4 * SR)) / SR
+        pad = sum(np.sin(2 * np.pi * f0 * 4 * m * pt + m) for m in (1, 1.25, 1.5)) * 0.04 * np.minimum(1, pt * 3) * np.minimum(1, (beat * 4 - pt) * 3)
+        add(mus, pad, t0)
+def whoosh(L=0.5):
+    x = rng.standard_normal(int(L * SR)); env = np.sin(np.linspace(0, np.pi, len(x))) ** 2
+    y = np.zeros_like(x); a = 0
+    for k in range(len(x)):
+        c = 0.02 + 0.3 * env[k]; a += c * (x[k] - a); y[k] = a
+    return y * env * 3
+def pop():
+    t = np.arange(int(0.15 * SR)) / SR; return np.sin(2 * np.pi * (900 - 3000 * t) * t) * np.exp(-t * 40) * 0.8 + rng.standard_normal(len(t)) * np.exp(-t * 80) * 0.4
+def ding():
+    t = np.arange(int(0.8 * SR)) / SR; return (np.sin(2 * np.pi * 1318 * t) + 0.5 * np.sin(2 * np.pi * 1975 * t)) * np.exp(-t * 6) * 0.5
+def impact():
+    t = np.arange(int(0.6 * SR)) / SR; return np.sin(2 * np.pi * (40 + 80 * np.exp(-t * 20)) * t) * np.exp(-t * 6) + rng.standard_normal(len(t)) * np.exp(-t * 30) * 0.3
+W1 = whoosh()
+for j, (st, du) in enumerate(segs):
+    if j: add(sfx, W1, st - GAP / 2 - 0.3, 0.6)
+add(sfx, pop(), segs[0][0] + 1.0); add(sfx, impact(), segs[1][0], 0.8)
+add(sfx, impact(), segs[2][0] + segs[2][1] * 0.45, 0.7); add(sfx, pop(), segs[3][0] + 1.2)
+for k in range(12): add(sfx, pop(), segs[5][0] + 0.3 + k * 0.12, 0.25)
+add(sfx, ding(), segs[8][0]); add(sfx, ding(), segs[7][0] + 0.1, 0.4)
+def wav(p, x):
+    x = (np.clip(x / max(1e-9, np.abs(x).max()) * 0.9, -1, 1) * 32767).astype(np.int16)
+    with wave.open(p, "wb") as w: w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR); w.writeframes(x.tobytes())
+wav("music.wav", mus); wav("sfx.wav", sfx)
+inputs += ["-i", "music.wav", "-i", "sfx.wav"]
+filt.append("[10:a]volume=0.32[m];[m][sc]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=300[md]")
+filt.append("[11:a]volume=0.55[fx];[vo]volume=1.6,highpass=f=80,acompressor=threshold=0.1:ratio=3[v2];[v2][md][fx]amix=inputs=3:normalize=0,alimiter=limit=0.95[mix]")
 subprocess.run(["ffmpeg", "-y", "-v", "error", "-framerate", str(FPS), "-i", "frames/%05d.jpg", *inputs,
-                "-filter_complex", ";".join(filt[:-1]), "-map", "0:v", "-map", "[vo]", "-t", f"{TOTAL:.2f}",
+                "-filter_complex", ";".join(filt), "-map", "0:v", "-map", "[mix]", "-t", f"{TOTAL:.2f}",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", "-c:a", "aac", "-b:a", "160k", OUT], check=True)
 print("done", OUT, round(TOTAL, 1), "s")
