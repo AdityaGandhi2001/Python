@@ -39,7 +39,26 @@ def ctext(d, y, s, sz, fill=(255, 255, 255), w="Black", stroke=0, sc=(0, 0, 0), 
     f = font(sz, w); bw = d.textlength(s, font=f)
     d.text(((W - bw) / 2 if x is None else x, y), s, font=f, fill=fill, stroke_width=stroke, stroke_fill=sc)
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+CAR = Image.open(os.path.join(HERE, "carbonator.png")).convert("RGBA")
+_b = Image.open(os.path.join(HERE, "beer.jpg")).convert("RGB")
+_cw = _b.height * 9 // 16; _x = 318 * _b.width // 637 - _cw // 2
+_bb = _b.crop((_x, 0, _x + _cw, _b.height)).resize((W, H), Image.LANCZOS).filter(ImageFilter.UnsharpMask(3, 120))
+BEER = _bb.crop((0, 0, W, 1)).resize((W, 200)).filter(ImageFilter.GaussianBlur(4)).resize((W, H))
+BEER.paste(_bb, (0, 170))
+BEER_CAP = (W // 2, int(H * 12 / 360))  # bottle-cap position in the BEER frame
+CUR = [None]
+
 def car(d, cx, cy, s=1.0, rot=0):
+    """Paste the real Carbonator cut-out (nose left, opener wing right)."""
+    w = int(CAR.width * 1.25 * s); c = CAR.resize((w, int(CAR.height * w / CAR.width)), Image.LANCZOS)
+    if rot: c = c.rotate(-math.degrees(rot), expand=True, resample=Image.BICUBIC)
+    sh = Image.new("RGBA", c.size, (0, 0, 0, 0)); sh.putalpha(c.getchannel("A").point(lambda a: a * 0.45))
+    sh = sh.filter(ImageFilter.GaussianBlur(10)); im = CUR[0]
+    im.paste((0, 0, 0), (int(cx - c.width / 2 + 10), int(cy - c.height / 2 + 25)), sh.getchannel("A"))
+    im.paste(c, (int(cx - c.width / 2), int(cy - c.height / 2)), c)
+
+def _old_car(d, cx, cy, s=1.0, rot=0):
     """Stylised bottle-shaped race car seen from the side."""
     def P(x, y):
         c, sn = math.cos(rot), math.sin(rot)
@@ -85,40 +104,41 @@ def badge(d):
 
 def scene(i, lt, gt):
     if i == 0:  # cap pop
-        im = getbg(0, (40, 25, 15), (5, 5, 5)); d = ImageDraw.Draw(im)
-        bottle(d, W / 2, 760, 1.4, cap=lt < 1.0)
-        cx = W / 2 + 140 - ease(lt / 0.9) * 120; car(d, cx + 150, 400, 0.8, rot=-0.5 if lt < 1 else -0.2)
+        z = 1.0 + 0.04 * lt; im = BEER.resize((int(W * z), int(H * z))).crop((0, 0, W, H)); CUR[0] = im; d = ImageDraw.Draw(im)
+        if lt < 1.0: d.rectangle([W / 2 - 40, 185, W / 2 + 40, 230], fill=(190, 190, 185))
+        k = ease(lt / 0.9); car(d, W / 2 - 210 + (1 - k) * 300, 290, 0.9, rot=0.35 if lt < 1 else 0.6)
         if lt >= 1.0:
-            k = lt - 1.0; d.rectangle([W / 2 - 42 + k * 200, 400 - k * 700 + k * k * 500, W / 2 + 42 + k * 200, 430 - k * 700 + k * k * 500], fill=(200, 170, 60))
+            k = lt - 1.0; d.rectangle([W / 2 - 42 + k * 200, 200 - k * 500 + k * k * 900, W / 2 + 42 + k * 200, 230 - k * 500 + k * k * 900], fill=(190, 190, 185))
             for j in range(12):
                 a = j / 12 * 6.28; r = 40 + k * 300
-                d.ellipse([W / 2 + math.cos(a) * r - 6, 420 + math.sin(a) * r - 6, W / 2 + math.cos(a) * r + 6, 420 + math.sin(a) * r + 6], fill=(255, 240, 200))
-        ctext(d, 120, "WAIT...", 80, Y, stroke=4)
+                d.ellipse([W / 2 + math.cos(a) * r - 6, 210 + math.sin(a) * r - 6, W / 2 + math.cos(a) * r + 6, 210 + math.sin(a) * r + 6], fill=(255, 250, 220))
+        ctext(d, 1050, "WAIT...", 90, Y, stroke=5)
     elif i == 1:  # title
-        im = getbg(1, (60, 60, 70), (15, 15, 20)); d = ImageDraw.Draw(im); sparkles(d, gt, seed=2)
+        im = getbg(1, (60, 60, 70), (15, 15, 20)); CUR[0] = im; d = ImageDraw.Draw(im); sparkles(d, gt, seed=2)
         sh = 8 * math.sin(lt * 40) * max(0, 1 - lt * 2); k = ease(lt / 0.4)
         ctext(d, 250 + sh, "HOT WHEELS", int(40 + 60 * k), R, stroke=6, sc=Y)
         ctext(d, 380, "CARBONATOR", int(30 + 40 * k), Y, stroke=4)
         car(d, W / 2 + (1 - k) * 600, 800, 1.3)
     elif i == 2:  # bottle -> car
-        im = getbg(2, (230, 220, 205), (200, 188, 170)); d = ImageDraw.Draw(im)
+        im = getbg(2, (230, 220, 205), (200, 188, 170)); CUR[0] = im; d = ImageDraw.Draw(im)
         k = ease((lt - segs[2][1] * 0.45) / 0.8)
         if k <= 0:
-            bottle(d, W / 2, 700, 1.0, col=PINK, label="IT'S A BOTTLE"); ctext(d, 200, "Looks like a bottle...", 46, (60, 40, 30))
+            car(d, W / 2, 720, 1.2, rot=-1.57 + 0.05 * math.sin(lt * 3)); ctext(d, 200, "Looks like a bottle...", 46, (60, 40, 30))
         else:
-            car(d, W / 2, 720, 0.6 + 0.9 * k, rot=(1 - k) * -1.57)
+            car(d, W / 2, 720, 1.2 + 0.2 * k, rot=(1 - k) * -1.57)
             ctext(d, 200, "BOOM!", int(60 + 50 * k), R, stroke=5, sc=Y); ctext(d, 320, "It's a race car", 46, (60, 40, 30))
     elif i == 3:  # opener
-        im = getbg(3, (210, 215, 225), (150, 155, 165)); d = ImageDraw.Draw(im)
         if lt < segs[3][1] / 2:
-            bottle(d, W / 2, 760, 1.2, col=(200, 230, 225), cap=lt < 1.2)
+            im = BEER.copy(); CUR[0] = im; d = ImageDraw.Draw(im)
+            car(d, W / 2 - 200, 280 + 15 * math.sin(lt * 6), 0.9, rot=0.5)
         else:
+            im = getbg(3, (210, 215, 225), (150, 155, 165)); CUR[0] = im; d = ImageDraw.Draw(im)
             d.rounded_rectangle([W / 2 - 120, 520, W / 2 + 120, 1040], 30, fill=(200, 205, 215), outline=(240, 240, 250), width=6)
             ctext(d, 720, "YOUR", 40, (90, 70, 30)); ctext(d, 770, "FAVOURITE", 40, (90, 70, 30)); ctext(d, 820, "DRINK", 40, (90, 70, 30))
-        car(d, W / 2 + 160, 420 + 20 * math.sin(lt * 6), 0.7, rot=-0.4)
-        ctext(d, 150, "IT OPENS BOTTLES!", 58, R, stroke=4, sc=(255, 255, 255))
+            car(d, W / 2 - 170, 470 + 20 * math.sin(lt * 6), 0.8, rot=0.5)
+        ctext(d, 1120, "IT OPENS BOTTLES!", 58, R, stroke=4, sc=(255, 255, 255))
     elif i == 4:  # friends
-        im = getbg(4, (255, 170, 80), (180, 60, 90)); d = ImageDraw.Draw(im); rnd = random.Random(4)
+        im = getbg(4, (255, 170, 80), (180, 60, 90)); CUR[0] = im; d = ImageDraw.Draw(im); rnd = random.Random(4)
         for j in range(80):
             x = rnd.uniform(0, W); y = (rnd.uniform(0, H) + lt * rnd.uniform(200, 500)) % H
             d.rectangle([x, y, x + 12, y + 6], fill=rnd.choice([Y, TEAL, PINK, (255, 255, 255)]))
@@ -128,7 +148,7 @@ def scene(i, lt, gt):
         car(d, W / 2, 470 - 30 * abs(math.sin(lt * 4)), 0.6)
         ctext(d, 170, "EVERYONE WANTS ONE", 50, (255, 255, 255), stroke=4)
     elif i == 5:  # sold out
-        im = getbg(5, (110, 35, 25), (40, 15, 10)); d = ImageDraw.Draw(im)
+        im = getbg(5, (110, 35, 25), (40, 15, 10)); CUR[0] = im; d = ImageDraw.Draw(im)
         for r in range(4):
             for c in range(3):
                 x, y = 60 + c * 210, 260 + r * 230
@@ -138,7 +158,7 @@ def scene(i, lt, gt):
                     d.text((x + 10, y + 70), "SOLD OUT", font=font(34), fill=(255, 40, 40), stroke_width=3, stroke_fill="white")
         ctext(d, 110, "SOLD OUT EVERYWHERE", 52, (255, 255, 255), stroke=4, sc=R)
     elif i == 6:  # instagram
-        im = getbg(6, (30, 10, 50), (5, 5, 15)); d = ImageDraw.Draw(im); sparkles(d, gt, 50, 6, (200, 120, 255))
+        im = getbg(6, (30, 10, 50), (5, 5, 15)); CUR[0] = im; d = ImageDraw.Draw(im); sparkles(d, gt, 50, 6, (200, 120, 255))
         def scr(s, x0, y0, w, h):
             s.rectangle([x0, y0, x0 + w, y0 + h], fill=(0, 0, 0))
             s.text((x0 + 30, y0 + 40), HANDLE, font=font(26), fill="white")
@@ -157,7 +177,7 @@ def scene(i, lt, gt):
             ctext(d, 120, "FOLLOW!", int(90 * k) + 1, Y, stroke=6, sc=(255, 90, 0))
         ctext(d, 1160, STORE, 48, (255, 255, 255), stroke=3, sc=(150, 50, 255))
     elif i == 7:  # whatsapp
-        im = getbg(7, (10, 40, 30), (5, 15, 10)); d = ImageDraw.Draw(im)
+        im = getbg(7, (10, 40, 30), (5, 15, 10)); CUR[0] = im; d = ImageDraw.Draw(im)
         def scr(s, x0, y0, w, h):
             s.rectangle([x0, y0, x0 + w, y0 + h], fill=(11, 20, 26)); s.rectangle([x0, y0, x0 + w, y0 + 90], fill=(31, 44, 52))
             s.text((x0 + 30, y0 + 25), STORE[:18], font=font(24), fill="white"); s.text((x0 + 30, y0 + 58), "Group • 1,287 members", font=font(14, "Regular"), fill=(170, 180, 180))
@@ -173,7 +193,7 @@ def scene(i, lt, gt):
         phone(im, scr)
         ctext(d, 110, "DROPS AT MRP", 64, (60, 230, 120), stroke=4, sc=(0, 0, 0))
     else:  # notification + end card
-        im = getbg(8, (40, 20, 60), (10, 5, 20)); d = ImageDraw.Draw(im); sparkles(d, gt, 60, 8, (255, 200, 80))
+        im = getbg(8, (40, 20, 60), (10, 5, 20)); CUR[0] = im; d = ImageDraw.Draw(im); sparkles(d, gt, 60, 8, (255, 200, 80))
         k = ease(lt / 0.5); y = -200 + k * 420
         d.rounded_rectangle([50, y, W - 50, y + 170], 30, fill=(245, 245, 248))
         d.rounded_rectangle([75, y + 30, 165, y + 120], 20, fill=(37, 211, 102)); d.text((100, y + 45), "S", font=font(56), fill="white")
